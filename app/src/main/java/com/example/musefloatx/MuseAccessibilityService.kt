@@ -77,12 +77,47 @@ class MuseAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * 帖子正文提取规则（结构过滤，不靠删关键词，也不动系统）：
+     * - 只认 text，不认按钮、图标的 contentDescription。
+     *   帖子正文在 TextView 的 text 里；“让 Grok 解释此帖子”“已验证”
+     *   “发帖选项”这类是图标、按钮的 contentDescription，只在无障碍
+     *   描述里出现，屏幕上并没有这行字，绝不能当成正文发给 AI。
+     * - 按节点结构区分：Button / ImageButton / ImageView 等控件节点
+     *   一律跳过，哪怕它上面有文字（那是按钮标签，不是正文）。
+     * - 只收叶子节点：容器节点的 text 会和子节点重复，叶子 TextView
+     *   才是真正的正文行。
+     * - contentDescription 只有一种情况才收：节点本身就是 TextView、
+     *   又是叶子、又没有 text——即自定义文本控件只能靠描述传文字时。
+     *   ImageView 徽标、ImageButton 图标的描述永远不收。
+     * 这样 X 以后换按钮文案也不会漏网，因为判断依据是“它是不是
+     * 按钮、图标”，不是“它叫什么名字”。
+     */
+    private fun postTextOf(node: AccessibilityNodeInfo): String? {
+        if (node.isPassword) return null
+        val className = node.className?.toString() ?: ""
+        val isControl = className.endsWith("Button") ||
+            className.endsWith("ImageView") ||
+            className.endsWith("CheckBox") ||
+            className.endsWith("RadioButton") ||
+            className.endsWith("Switch") ||
+            className.endsWith("SeekBar") ||
+            className.endsWith("Spinner")
+        if (isControl) return null
+        if (node.childCount != 0) return null
+        val text = node.text?.toString()?.trim() ?: ""
+        if (text.length >= 2 && text != "MuseFloatX") return text
+        // 只有 TextView 叶子、且没有 text 时，才退而求其次收描述。
+        if (className.endsWith("TextView")) {
+            val desc = node.contentDescription?.toString()?.trim() ?: ""
+            if (desc.length >= 2) return desc
+        }
+        return null
+    }
+
     private fun collectRegion(node: AccessibilityNodeInfo?, rect: Rect, out: MutableList<Triple<Int, Int, String>>, depth: Int) {
         if (node == null || depth > 30) return
         try {
-            // 不再只收叶子节点：X 里有些帖子文字挂在带子节点的容器上，
-            // 只收叶子会把主帖漏掉；全收、按位置排序去重，框内重复的片段
-            // 最多让模型多看一遍，不会把主帖漏成空。
             if (!node.isPassword) {
                 val bounds = Rect()
                 node.getBoundsInScreen(bounds)
@@ -90,10 +125,8 @@ class MuseAccessibilityService : AccessibilityService() {
                 // 评论区节点不再算进来，否则框住主帖也会带上评论区。
                 // 裁剪框可以精确调到只盖主帖，所以严格一点反而更准。
                 if (rect.contains(bounds.centerX(), bounds.centerY())) {
-                    val t = node.text?.toString()?.trim() ?: ""
-                    if (t.length >= 2 && t != "MuseFloatX") out.add(Triple(bounds.top, bounds.left, t))
-                    val desc = node.contentDescription?.toString()?.trim() ?: ""
-                    if (desc.length >= 2) out.add(Triple(bounds.top, bounds.left, desc))
+                    val t = postTextOf(node)
+                    if (t != null) out.add(Triple(bounds.top, bounds.left, t))
                 }
             }
             for (i in 0 until node.childCount) {
@@ -106,14 +139,8 @@ class MuseAccessibilityService : AccessibilityService() {
     private fun collect(node: AccessibilityNodeInfo?, out: LinkedHashSet<String>, depth: Int) {
         if (node == null || depth > 30) return
         try {
-            if (!node.isPassword) {
-                val t = node.text?.toString()?.trim() ?: ""
-                if (t.length >= 2 && t != "MuseFloatX") {
-                    out.add(t)
-                }
-                val desc = node.contentDescription?.toString()?.trim() ?: ""
-                if (desc.length >= 2) out.add(desc)
-            }
+            val t = postTextOf(node)
+            if (t != null) out.add(t)
             for (i in 0 until node.childCount) {
                 collect(node.getChild(i), out, depth + 1)
             }
