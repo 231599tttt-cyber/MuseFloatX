@@ -414,8 +414,10 @@ class FloatingService : Service() {
                             listOf("自然", "幽默", "简短").forEach { s ->
                                 val selected = styleState == s
                                 if (selected) {
-                                    // 正在生成时，再点已选中的风格是重复提交，置灰点不动。
-                                    Button(onClick = { setStyle(s) }, enabled = !isGenerating, modifier = Modifier.padding(end = 8.dp)) { Text(s) }
+                                    // 已选中的风格永远保持紫色、不变灰：之前生成中把它置灰，
+                                    // 看起来就是点了变灰、很难看。重复提交的防线在 setStyle
+                                    // 代码里（生成中再点已选风格直接返回），不需要靠变灰来挡。
+                                    Button(onClick = { setStyle(s) }, modifier = Modifier.padding(end = 8.dp)) { Text(s) }
                                 } else {
                                     // 正在生成时，点另一个风格是换风格重来，要能点：
                                     // 它会先取消当前那一通，再用新风格提交一次，
@@ -436,7 +438,7 @@ class FloatingService : Service() {
                             Button(onClick = { copyReply() }, modifier = Modifier.padding(end = 8.dp)) { Text("复制") }
                             // 重新生成只对当前原文再生成一次，不重读剪贴板，
                             // 避免面板开着时剪贴板已被别的内容覆盖。
-                            OutlinedButton(onClick = { generate() }, enabled = !isGenerating, modifier = Modifier.padding(end = 8.dp)) { Text("重新生成") }
+                            OutlinedButton(onClick = { generate() }, modifier = Modifier.padding(end = 8.dp)) { Text("重新生成") }
                             // 面板整洁：点球已经读过剪贴板了，“读取剪贴板”就是多余的，
                             // 留着只会让人手滑再提交一次，已删掉。新帖子请关面板、
                             // 重新复制、再点球，那才是新的一次提交。
