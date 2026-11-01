@@ -17,6 +17,17 @@ object ApiClient {
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
+    /**
+     * 速度优先的 token 上限：回复本来就短，400 个 token 要生成很久
+     * 才算“已生成”，大部分时间都在等后面用不上的字。
+     * 简短 80 个 token 足够 30 字内回复；自然/幽默 180 个 token
+     * 足够一条正常回复，总时长大约比 400 档少一半，流式首字不变、
+     * 完整回复出得更快。帖子输入仍取前 2000 字，不截短原文。
+     */
+    fun maxTokensForStyle(style: String): Int {
+        return if (style == "简短") 80 else 180
+    }
+
     fun styleInstruction(style: String): String {
         return when (style) {
             "幽默" -> "风格：轻松幽默，带一点俏皮，不要过分，不要冒犯。"
@@ -43,7 +54,7 @@ object ApiClient {
                 put("model", model)
                 put("stream", false)
                 put("temperature", 0.7)
-                put("max_tokens", 400)
+                put("max_tokens", maxTokensForStyle(style))
                 put("messages", JSONArray().apply {
                     put(JSONObject().apply { put("role", "system"); put("content", system) })
                     put(JSONObject().apply { put("role", "user"); put("content", user) })
@@ -109,7 +120,7 @@ object ApiClient {
                 put("model", model)
                 put("stream", true)
                 put("temperature", 0.7)
-                put("max_tokens", 400)
+                put("max_tokens", maxTokensForStyle(style))
                 put("messages", JSONArray().apply {
                     put(JSONObject().apply { put("role", "system"); put("content", system) })
                     put(JSONObject().apply { put("role", "user"); put("content", user) })

@@ -287,15 +287,13 @@ class FloatingService : Service() {
             val t = if (clip != null && clip.itemCount > 0) {
                 clip.getItemAt(0)?.text?.toString()?.trim() ?: ""
             } else ""
-            if (t.length >= 5) {
+            // 短帖也要生成：剪贴板是你亲手复制的，不是自动读到的界面按钮字，
+            // 所以不需要 5 个字过滤——2、3 个字也直接生成，空才不发。
+            if (t.isNotEmpty()) {
                 postText = t
                 pasteText = t
                 replyText = ""
                 generate()
-            } else if (t.isNotEmpty()) {
-                postText = ""
-                replyText = ""
-                statusText = "剪贴板内容太短（不到 5 个字），不会发送：先在 X 里复制整条帖子，再点悬浮球；或在下面输入框手动粘贴"
             } else {
                 postText = ""
                 replyText = ""
@@ -386,11 +384,11 @@ class FloatingService : Service() {
                         Row {
                             Button(onClick = {
                                 val t = pasteText.trim()
-                                if (t.length >= 5) {
+                                if (t.isNotEmpty()) {
                                     postText = t
                                     generate()
                                 } else {
-                                    statusText = "先粘贴帖子内容，至少 5 个字再点生成"
+                                    statusText = "先粘贴帖子内容再点生成"
                                 }
                             }, modifier = Modifier.padding(end = 8.dp)) { Text("用粘贴的内容生成") }
                             OutlinedButton(onClick = { pasteFromClipboard() }) { Text("从剪贴板粘贴") }
@@ -437,17 +435,20 @@ class FloatingService : Service() {
     private fun setStyle(s: String) {
         styleState = s
         store.style = s
-        if (postText.length >= 5) generate()
+        if (postText.isNotBlank()) generate()
     }
 
     private fun generate() {
         val text = postText
-        if (text.length < 5) return
+        if (text.isBlank()) return
         statusText = "生成中…"
         replyText = ""
         scope.launch {
             // 先走流式：字一出来面板上就先显示，不用等全文。
-            // 流式失败且一字没出时，再用非流式兜底一次。
+            // 速度优先：流式失败且一字没出时，只有快失败（15 秒内，
+            // 多半是瞬时问题）才用非流式兜底一次；慢失败不再等第二遍
+            // 全文，直接报错，用户点重新生成比干等第二遍更快。
+            val startMs = System.currentTimeMillis()
             val streamResult = ApiClient.generateStream(store.baseUrl, store.apiKey, store.model, styleState, text) { piece ->
                 replyText += piece
             }
@@ -458,6 +459,10 @@ class FloatingService : Service() {
             }
             if (replyText.isNotBlank()) {
                 statusText = "已生成（部分）"
+                return@launch
+            }
+            if (System.currentTimeMillis() - startMs > 15_000) {
+                statusText = "生成失败：${streamResult.exceptionOrNull()?.message ?: "请求失败"}，点重新生成再试一次"
                 return@launch
             }
             val fallback = ApiClient.generate(store.baseUrl, store.apiKey, store.model, styleState, text)
@@ -537,12 +542,9 @@ class FloatingService : Service() {
             val t = if (clip != null && clip.itemCount > 0) {
                 clip.getItemAt(0)?.text?.toString()?.trim() ?: ""
             } else ""
-            if (t.length >= 5) {
+            if (t.isNotEmpty()) {
                 pasteText = t
                 statusText = "已从剪贴板粘贴，点“用粘贴的内容生成”即可"
-            } else if (t.isNotEmpty()) {
-                pasteText = t
-                statusText = "剪贴板内容太短，先在 X 里复制整条帖子"
             } else {
                 statusText = "剪贴板是空的：先在 X 里复制帖子，再点这个按钮；或点输入框长按粘贴"
             }
