@@ -41,9 +41,9 @@ object ApiClient {
 
     fun styleInstruction(style: String): String {
         return when (style) {
-            "幽默" -> "风格：轻松幽默，带一点俏皮，不要过分，不要冒犯。只说一句话，十几二十个字就可以了，不要写长。"
-            "简短" -> "风格：简短，只说一句话，十几二十个字就可以了。"
-            else -> "风格：自然得体，口语化，不过度正式。只说一句话，十几二十个字就可以了，不要写长。"
+            "幽默" -> "幽默地"
+            "简短" -> "简短地"
+            else -> "自然地"
         }
     }
 
@@ -57,13 +57,10 @@ object ApiClient {
         try {
             if (baseUrl.isBlank()) return@withContext Result.failure(Exception("请先在设置里填写 AI 服务地址"))
             if (apiKey.isBlank()) return@withContext Result.failure(Exception("请先在设置里填写 API 密钥"))
-            // 注意：服务端会忽略 max_tokens，所以字数只能靠下面这条提示词来控制，
-            // 光改 token 上限是缩不短的。
-            val system = "你是一个回复助手。只输出回复正文，不要解释、不要加引号、不要加前后缀。" +
-                "回复语言与帖子语言保持一致：中文帖子用中文，英文帖子用英文，其他语言用该语言。" +
-                "说人话，像真人随手回帖，不要书面语、不要套话、不要“首先、其次、总之、希望对你有帮助”这类 AI 味的词，不要自我介绍、不要总结、不要堆表情和感叹号，直接回应帖子内容。" +
-                styleInstruction(style)
-            val user = "当前应用：X\n帖子内容：\n" + postText.take(2000) + "\n\n请生成一条合适的回复。用户会自己复制粘贴，不要自动发送。"
+            // 前缀已按用户要求缩到一句：你是一个回复助手，根据内容，风格回复，尽量简洁，十几二十个字。
+            // 服务端会忽略 max_tokens，字数仍靠这句短提示词控制。
+            val system = "你是一个回复助手。根据这个内容，" + styleInstruction(style) + "回复，尽量简洁，十几二十个字。"
+            val user = "X 帖子：\n" + postText.take(2000) + "\n回一条，别自动发送。"
             val body = JSONObject().apply {
                 put("model", model)
                 put("stream", false)
@@ -132,13 +129,10 @@ object ApiClient {
         try {
             if (baseUrl.isBlank()) return@withContext Result.failure(Exception("请先在设置里填写 AI 服务地址"))
             if (apiKey.isBlank()) return@withContext Result.failure(Exception("请先在设置里填写 API 密钥"))
-            // 注意：服务端会忽略 max_tokens，所以字数只能靠下面这条提示词来控制，
-            // 光改 token 上限是缩不短的。
-            val system = "你是一个回复助手。只输出回复正文，不要解释、不要加引号、不要加前后缀。" +
-                "回复语言与帖子语言保持一致：中文帖子用中文，英文帖子用英文，其他语言用该语言。" +
-                "说人话，像真人随手回帖，不要书面语、不要套话、不要“首先、其次、总之、希望对你有帮助”这类 AI 味的词，不要自我介绍、不要总结、不要堆表情和感叹号，直接回应帖子内容。" +
-                styleInstruction(style)
-            val user = "当前应用：X\n帖子内容：\n" + postText.take(2000) + "\n\n请生成一条合适的回复。用户会自己复制粘贴，不要自动发送。"
+            // 前缀已按用户要求缩到一句：你是一个回复助手，根据内容，风格回复，尽量简洁，十几二十个字。
+            // 服务端会忽略 max_tokens，字数仍靠这句短提示词控制。
+            val system = "你是一个回复助手。根据这个内容，" + styleInstruction(style) + "回复，尽量简洁，十几二十个字。"
+            val user = "X 帖子：\n" + postText.take(2000) + "\n回一条，别自动发送。"
             val body = JSONObject().apply {
                 put("model", model)
                 put("stream", true)
