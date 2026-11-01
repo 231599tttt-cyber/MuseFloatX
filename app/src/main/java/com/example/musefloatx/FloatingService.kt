@@ -330,7 +330,7 @@ class FloatingService : Service() {
     private fun setStyle(s: String) {
         styleState = s
         store.style = s
-        if (postText.length >= 20) generate()
+        if (postText.length >= 5) generate()
     }
 
     private fun refreshPostOnly() {
@@ -342,17 +342,20 @@ class FloatingService : Service() {
         } else {
             statusText = "没有读到帖子文字，请在 X 里打开一条帖子，或点截图识别"
         }
+        // 重新识别以前只改面板里一行小字，帖子没变时看起来就像没反应，
+        // 现在弹一句提示，让点按一定有反馈。
+        Toast.makeText(this, statusText, Toast.LENGTH_SHORT).show()
     }
 
     private fun refreshPostAndGenerate() {
         refreshPostOnly()
-        if (postText.length >= 20) generate()
+        if (postText.length >= 5) generate()
         else statusText = "没有读到帖子文字，请在 X 里打开一条帖子，或点截图识别"
     }
 
     private fun generate() {
         val text = postText
-        if (text.length < 20) return
+        if (text.length < 5) return
         statusText = "生成中…"
         replyText = ""
         scope.launch {
@@ -501,7 +504,13 @@ class FloatingService : Service() {
             }
         }
         selectionView = view
-        wm.addView(view, params)
+        try {
+            wm.addView(view, params)
+        } catch (e: Exception) {
+            selectionView = null
+            Toast.makeText(this, "框选打开失败：${e.message}", Toast.LENGTH_SHORT).show()
+            showPanel()
+        }
     }
 
     private fun cancelSelection() {
@@ -516,13 +525,15 @@ class FloatingService : Service() {
         if (text.isBlank()) {
             postText = ""
             statusText = "框选区域内没有读到文字，请把框画大一点，框住帖子文字"
+        } else if (text.length < 5) {
+            postText = text
+            statusText = "框选到的文字太短，请把框画大一点"
         } else {
             postText = text
             statusText = "框选识别完成"
         }
         showPanel()
-        if (postText.length >= 20) generate()
-        else if (text.isNotBlank()) statusText = "框选到的文字太短，请把框画大一点"
+        if (postText.length >= 5) generate()
     }
 
     private fun removeSelection() {

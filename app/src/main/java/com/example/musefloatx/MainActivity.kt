@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Column
@@ -63,7 +64,7 @@ class MainActivity : ComponentActivity() {
                         .verticalScroll(rememberScrollState())
                 ) {
                     Text("MuseFloatX", fontSize = 24.sp, fontWeight = FontWeight.Bold)
-                    Text("版本：第 7 版（面板重做版），装好后这里必须显示第 7 版才算新版。", fontSize = 13.sp)
+                    Text("版本：第 8 版（按钮反馈版），装好后这里必须显示第 8 版才算新版。", fontSize = 13.sp)
                     Text("只在 X 里用的悬浮回复助手：点悬浮球识别帖子、生成回复建议，你自己复制粘贴，不自动发送。", fontSize = 14.sp)
                     Spacer(Modifier.height(16.dp))
 
@@ -124,6 +125,13 @@ class MainActivity : ComponentActivity() {
                     Text("3. 悬浮球", fontWeight = FontWeight.Bold)
                     Row {
                         Button(onClick = {
+                            // 没开悬浮窗时以前是直接启动服务然后静默闪退，点启动像没反应。
+                            // 现在先检查，没开就提示并跳到设置，不再静默失败。
+                            if (!Settings.canDrawOverlays(this@MainActivity)) {
+                                Toast.makeText(this@MainActivity, "请先开悬浮窗权限", Toast.LENGTH_SHORT).show()
+                                startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+                                return@Button
+                            }
                             val intent = Intent(this@MainActivity, FloatingService::class.java).apply { action = "START" }
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
                         }, modifier = Modifier.padding(end = 8.dp)) { Text("启动悬浮球") }
