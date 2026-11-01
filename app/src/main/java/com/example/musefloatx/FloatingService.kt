@@ -248,7 +248,9 @@ class FloatingService : Service() {
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            // NOT_TOUCH_MODAL：面板外的触摸还给 X，面板开着时 X 也能滑，
+            // 之前没加这个，面板一开就像把屏幕盖住了，滑不动也关不掉。
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
@@ -263,47 +265,61 @@ class FloatingService : Service() {
                 shape = RoundedCornerShape(16.dp)
             ) {
                 Column(
-                    modifier = Modifier
-                        .padding(16.dp)
-                        .heightIn(max = 520.dp)
-                        .verticalScroll(rememberScrollState())
+                    modifier = Modifier.padding(16.dp)
                 ) {
-                    Text("当前帖子", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                    Spacer(Modifier.height(6.dp))
-                    Text(if (postText.isBlank()) "正在识别…" else postText.take(800), fontSize = 13.sp)
-                    Spacer(Modifier.height(12.dp))
-                    Text("风格", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                    Row {
-                        listOf("自然", "幽默", "简短").forEach { s ->
-                            val selected = styleState == s
-                            if (selected) {
-                                Button(onClick = { setStyle(s) }, modifier = Modifier.padding(end = 8.dp)) { Text(s) }
-                            } else {
-                                OutlinedButton(onClick = { setStyle(s) }, modifier = Modifier.padding(end = 8.dp)) { Text(s) }
-                            }
-                        }
-                    }
-                    Spacer(Modifier.height(12.dp))
-                    Text("AI 回复", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                    Text(statusText, fontSize = 12.sp, color = Color.Gray)
-                    Spacer(Modifier.height(6.dp))
-                    SelectionContainer {
-                        Text(if (replyText.isBlank()) "" else replyText, fontSize = 15.sp)
-                    }
-                    Spacer(Modifier.height(12.dp))
-                    Row {
-                        Button(onClick = { copyReply() }, modifier = Modifier.padding(end = 8.dp)) { Text("复制") }
-                        OutlinedButton(onClick = { refreshPostAndGenerate() }, modifier = Modifier.padding(end = 8.dp)) { Text("重新生成") }
-                        OutlinedButton(onClick = { ocrFlow() }) { Text("截图识别") }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Row {
-                        OutlinedButton(onClick = { refreshPostOnly() }, modifier = Modifier.padding(end = 8.dp)) { Text("重新识别") }
-                        OutlinedButton(onClick = { showSelectionOverlay() }, modifier = Modifier.padding(end = 8.dp)) { Text("框选识别") }
+                    // 顶部固定栏：关闭按钮永远在上面，不用滑到底才能关。
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("AI 回复助手", fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.weight(1f))
                         OutlinedButton(onClick = { removePanel() }) { Text("关闭") }
                     }
-                    Spacer(Modifier.height(6.dp))
-                    Text("只生成建议，不会自动发送，请你自己粘贴。", fontSize = 12.sp, color = Color.Gray)
+                    Spacer(Modifier.height(8.dp))
+                    Column(
+                        modifier = Modifier
+                            .heightIn(max = 420.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        Text("当前帖子", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Spacer(Modifier.height(6.dp))
+                        // 只显示前 300 字预览，全文仍用于生成，面板不再被长帖子撑得滑不动。
+                        Text(
+                            if (postText.isBlank()) "正在识别…"
+                            else if (postText.length > 300) postText.take(300) + "…（全文已用于生成）"
+                            else postText,
+                            fontSize = 13.sp
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Text("风格", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Row {
+                            listOf("自然", "幽默", "简短").forEach { s ->
+                                val selected = styleState == s
+                                if (selected) {
+                                    Button(onClick = { setStyle(s) }, modifier = Modifier.padding(end = 8.dp)) { Text(s) }
+                                } else {
+                                    OutlinedButton(onClick = { setStyle(s) }, modifier = Modifier.padding(end = 8.dp)) { Text(s) }
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        Text("AI 回复", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Text(statusText, fontSize = 12.sp, color = Color.Gray)
+                        Spacer(Modifier.height(6.dp))
+                        SelectionContainer {
+                            Text(if (replyText.isBlank()) "" else replyText, fontSize = 15.sp)
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        Row {
+                            Button(onClick = { copyReply() }, modifier = Modifier.padding(end = 8.dp)) { Text("复制") }
+                            OutlinedButton(onClick = { refreshPostAndGenerate() }, modifier = Modifier.padding(end = 8.dp)) { Text("重新生成") }
+                            OutlinedButton(onClick = { ocrFlow() }) { Text("截图识别") }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Row {
+                            OutlinedButton(onClick = { refreshPostOnly() }, modifier = Modifier.padding(end = 8.dp)) { Text("重新识别") }
+                            OutlinedButton(onClick = { showSelectionOverlay() }) { Text("框选识别") }
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Text("只生成建议，不会自动发送，请你自己粘贴。点一下悬浮球也能关闭面板。", fontSize = 12.sp, color = Color.Gray)
+                    }
                 }
             }
         }
