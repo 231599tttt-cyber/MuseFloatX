@@ -307,7 +307,7 @@ class FloatingService : Service() {
                         Spacer(Modifier.height(6.dp))
                         // 只显示前 300 字预览，全文仍用于生成，面板不再被长帖子撑得滑不动。
                         Text(
-                            if (postText.isBlank()) "正在识别…"
+                            if (postText.isBlank()) "（暂无识别结果，看下面 AI 回复那行原因）"
                             else if (postText.length > 300) postText.take(300) + "…（全文已用于生成）"
                             else postText,
                             fontSize = 13.sp
@@ -744,18 +744,21 @@ class FloatingService : Service() {
         // 只有无障碍实在读不到时，才在面板里明说，并让用户自己
         // 点面板里的“截图识别”再走截图路线（那一步才会弹许可，
         // 是用户主动选的，不是确认默认带的）。
-        val accessText = MuseAccessibilityService.instance?.captureRegion(rect) ?: ""
+        val svc = MuseAccessibilityService.instance
+        val accessText = svc?.captureRegion(rect) ?: ""
         boxFallbackText = accessText
         boxImageBitmap = null
         removeSelection()
         postText = ""
         showPanel()
-        if (accessText.length >= 5) {
+        if (svc == null) {
+            statusText = "无障碍未开启：App 读不到任何文字，请回 App 主页开无障碍（侧载应用先点应用信息右上角三个点→允许受限设置，再开），开了再框选"
+        } else if (accessText.length >= 5) {
             postText = accessText.take(4000)
             statusText = "框选识别完成"
             generate()
         } else {
-            statusText = "框内无障碍没读到文字：请把框调大一点、只盖正文再确认；如果还是读不到，再点面板里的截图识别（那会弹录屏许可）"
+            statusText = "无障碍已开，但框内没读到文字：请把框调大一点、只盖正文再确认；如果还是读不到，再点面板里的截图识别（那会弹录屏许可）"
         }
     }
 

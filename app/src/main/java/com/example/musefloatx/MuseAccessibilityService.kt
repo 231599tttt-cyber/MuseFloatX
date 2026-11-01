@@ -61,20 +61,32 @@ class MuseAccessibilityService : AccessibilityService() {
     fun captureRegion(rect: Rect): String {
         try {
             val root = rootInActiveWindow ?: return ""
-            val items = mutableListOf<Triple<Int, Int, String>>()
-            collectRegion(root, rect, items, 0)
-            val seen = LinkedHashSet<String>()
-            val sb = StringBuilder()
-            for ((_, _, t) in items.sortedWith(compareBy({ it.first }, { it.second }))) {
-                if (seen.add(t)) {
-                    if (sb.isNotEmpty()) sb.append("\n")
-                    sb.append(t)
-                }
-            }
-            return sb.toString().take(4000)
+            // 第一遍：严格中心在框内（最准，不带评论区）。
+            val center = collectRegionText(root, rect, strictCenter = true)
+            if (center.length >= 5) return center
+            // 第二遍：框边擦到的节点也算。中心法对坐标稍有偏差、
+            // 或者帖子节点特别大时太严，会一个字都读不到；
+            // 相交法至少能读到框住的正文，比空着强。
+            val inter = collectRegionText(root, rect, strictCenter = false)
+            if (inter.length >= 5) return inter
+            return center.ifEmpty { inter }
         } catch (e: Exception) {
             return ""
         }
+    }
+
+    private fun collectRegionText(root: AccessibilityNodeInfo, rect: Rect, strictCenter: Boolean): String {
+        val items = mutableListOf<Triple<Int, Int, String>>()
+        collectRegion2(root, rect, items, 0, strictCenter)
+        val seen = LinkedHashSet<String>()
+        val sb = StringBuilder()
+        for ((_, _, t) in items.sortedWith(compareBy({ it.first }, { it.second }))) {
+            if (seen.add(t)) {
+                if (sb.isNotEmpty()) sb.append("\n")
+                sb.append(t)
+            }
+        }
+        return sb.toString().take(4000)
     }
 
     /**
@@ -104,7 +116,21 @@ class MuseAccessibilityService : AccessibilityService() {
             className.endsWith("SeekBar") ||
             className.endsWith("Spinner")
         if (isControl) return null
-        if (node.childCount != 0) return null
+        if (node.childCount != 0) {
+            // 有些 App 的正文节点本身带子节点，但子节点都没有文字，
+            // 正文只在父节点 text 里。以前一律跳过父节点，这种帖子
+            // 就一个字都读不到。现在放宽：子节点都没文字时收父节点，
+            // 子节点有文字时仍只收子节点，不会重复。
+            var childHasText = false
+            for (i in 0 until node.childCount) {
+                val c = try { node.getChild(i) } catch (e: Exception) { null }
+                if (c != null && !c.text.isNullOrBlank()) { childHasText = true; break }
+            }
+            if (childHasText) return null
+            val parentText = node.text?.toString()?.trim() ?: ""
+            if (parentText.length >= 2 && parentText != "MuseFloatX") return parentText
+            return null
+        }
         val text = node.text?.toString()?.trim() ?: ""
         if (text.length >= 2 && text != "MuseFloatX") return text
         // 只有 TextView 叶子、且没有 text 时，才退而求其次收描述。
@@ -115,22 +141,21 @@ class MuseAccessibilityService : AccessibilityService() {
         return null
     }
 
-    private fun collectRegion(node: AccessibilityNodeInfo?, rect: Rect, out: MutableList<Triple<Int, Int, String>>, depth: Int) {
+    private fun collectRegion2(node: AccessibilityNodeInfo?, rect: Rect, out: MutableList<Triple<Int, Int, String>>, depth: Int, strictCenter: Boolean) {
         if (node == null || depth > 30) return
         try {
             if (!node.isPassword) {
                 val bounds = Rect()
                 node.getBoundsInScreen(bounds)
-                // 严格框选：只认中心点落在框内的节点，框边只擦到一点的
-                // 评论区节点不再算进来，否则框住主帖也会带上评论区。
-                // 裁剪框可以精确调到只盖主帖，所以严格一点反而更准。
-                if (rect.contains(bounds.centerX(), bounds.centerY())) {
+                val hit = if (strictCenter) rect.contains(bounds.centerX(), bounds.centerY())
+                    else Rect.intersects(rect, bounds)
+                if (hit) {
                     val t = postTextOf(node)
                     if (t != null) out.add(Triple(bounds.top, bounds.left, t))
                 }
             }
             for (i in 0 until node.childCount) {
-                collectRegion(node.getChild(i), rect, out, depth + 1)
+                collectRegion2(node.getChild(i), rect, out, depth + 1, strictCenter)
             }
         } catch (e: Exception) {
         }
