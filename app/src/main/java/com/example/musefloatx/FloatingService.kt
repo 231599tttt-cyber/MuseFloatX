@@ -164,7 +164,7 @@ class FloatingService : Service() {
                                     snapToEdge()
                                 }
                             },
-                            onDragCancel = { snapToEdge() },
+                            onDragCancel = { if (moved < 10f) onBallTap() else snapToEdge() },
                             onDrag = { change, dragAmount ->
                                 change.consume()
                                 moved += abs(dragAmount.x) + abs(dragAmount.y)
