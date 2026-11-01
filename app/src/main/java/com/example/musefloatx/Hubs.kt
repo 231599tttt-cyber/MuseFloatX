@@ -28,6 +28,11 @@ object CaptureHub {
     val ocrText: StateFlow<String?> = _ocrText
     // 框选截图时的裁剪框（屏幕像素坐标），CaptureActivity 认完后清掉。
     @Volatile var cropRect: android.graphics.Rect? = null
+    // 框选完成后要给用户看的实际裁剪图（像素证据），面板里直接显示。
+    @Volatile var croppedBitmap: android.graphics.Bitmap? = null
+    // 识别失败的具体原因，不允许静默失败：取消许可、超时、OCR 失败等
+    // 都要写清原因，面板里原样显示。
+    @Volatile var lastOcrError: String? = null
     fun post(text: String) { _ocrText.value = text }
     fun clear() { _ocrText.value = null }
 }

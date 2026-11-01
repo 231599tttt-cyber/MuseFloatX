@@ -27,17 +27,26 @@ class CaptureActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         CaptureHub.clear()
+        CaptureHub.croppedBitmap = null
+        CaptureHub.lastOcrError = null
         val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         @Suppress("DEPRECATION")
         startActivityForResult(mgr.createScreenCaptureIntent(), 1001)
-        handler.postDelayed({ finishIfNotDone() }, 10000)
+        handler.postDelayed({
+            if (!done) {
+                CaptureHub.lastOcrError = "截图超时：10 秒内没拿到截图，请重试并点开始"
+                CaptureHub.post("")
+            }
+            finishIfNotDone()
+        }, 10000)
     }
 
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != 1001 || resultCode != RESULT_OK || data == null) {
-            // 取消录屏也要回传一个空结果，否则面板会一直停在“正在截图识别”。
+            // 取消录屏也要回传一个空结果 + 具体原因，否则面板会一直停在“正在截图识别”。
+            CaptureHub.lastOcrError = "用户取消了录屏许可：没点开始，App 拿不到截图"
             CaptureHub.post("")
             finishIfNotDone()
             return
@@ -100,13 +109,17 @@ class CaptureActivity : Activity() {
                 val h = minOf(crop.height(), bitmap.height - top)
                 if (w > 0 && h > 0) Bitmap.createBitmap(bitmap, left, top, w, h) else bitmap
             } else bitmap
+            // 把实际裁剪图留给面板显示，用户能一眼看到框住的是不是要认的内容。
+            CaptureHub.croppedBitmap = target
             val recognizer = TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
             recognizer.process(InputImage.fromBitmap(target, 0))
                 .addOnSuccessListener { result ->
+                    CaptureHub.lastOcrError = null
                     CaptureHub.post(result.text ?: "")
                     finishIfNotDone()
                 }
-                .addOnFailureListener {
+                .addOnFailureListener { e ->
+                    CaptureHub.lastOcrError = "本地 OCR 识别失败：${e.message ?: "未知错误"}"
                     CaptureHub.post("")
                     finishIfNotDone()
                 }

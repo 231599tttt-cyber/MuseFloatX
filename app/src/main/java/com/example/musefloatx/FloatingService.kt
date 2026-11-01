@@ -18,6 +18,7 @@ import android.view.Gravity
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.fillMaxSize
@@ -48,6 +49,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
@@ -101,6 +103,7 @@ class FloatingService : Service() {
     private lateinit var store: SettingsStore
 
     private var postText by mutableStateOf("")
+    private var boxImageBitmap by mutableStateOf<android.graphics.Bitmap?>(null)
     private var replyText by mutableStateOf("")
     private var statusText by mutableStateOf("点悬浮球后自动识别")
     private var styleState by mutableStateOf("自然")
@@ -295,6 +298,19 @@ class FloatingService : Service() {
                             else postText,
                             fontSize = 13.sp
                         )
+                        // 通用框选证据：显示实际裁剪图，用户能一眼看到框住的是不是要认的内容，
+                        // 是 X 帖子、ChatGPT 聊天还是浏览器文章，而不是只信一行文字结果。
+                        val cropImg = boxImageBitmap
+                        if (cropImg != null) {
+                            Spacer(Modifier.height(8.dp))
+                            Text("框选图片：", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.height(4.dp))
+                            Image(
+                                bitmap = cropImg.asImageBitmap(),
+                                contentDescription = "框选裁剪图片",
+                                modifier = Modifier.fillMaxWidth().heightIn(max = 180.dp)
+                            )
+                        }
                         Spacer(Modifier.height(12.dp))
                         Text("风格", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                         Row {
@@ -399,17 +415,22 @@ class FloatingService : Service() {
             CaptureHub.ocrText.collectLatest { ocr ->
                 if (ocr == null) return@collectLatest
                 if (ocr.isBlank()) {
+                    val err = CaptureHub.lastOcrError
                     if (boxFallbackText.length >= 5) {
                         postText = boxFallbackText
                         boxFallbackText = ""
-                        statusText = "截图没认出，改用无障碍结果"
+                        statusText = if (err != null) "识别失败：$err，改用无障碍结果" else "截图没认出，改用无障碍结果"
                         generate()
+                    } else if (err != null) {
+                        statusText = "识别失败：$err"
                     } else {
-                        statusText = "截图识别没有认出文字：可能点了取消录屏，或图片上没有文字，请重新点截图识别并点开始"
+                        statusText = "截图识别没有认出文字：框内可能没有文字，或文字太小、太模糊，请把框调大一点、只盖文字，再点确认"
                     }
                 } else {
                     postText = ocr.take(4000)
+                    boxImageBitmap = CaptureHub.croppedBitmap
                     boxFallbackText = ""
+                    CaptureHub.lastOcrError = null
                     statusText = "截图识别完成"
                     generate()
                 }
@@ -430,6 +451,7 @@ class FloatingService : Service() {
     private fun removePanel() {
         try { panelView?.let { wm.removeView(it) } } catch (e: Exception) {}
         panelView = null
+        boxImageBitmap = null
     }
 
     /**
@@ -694,6 +716,7 @@ class FloatingService : Service() {
         // 自动改用无障碍结果。
         val accessText = MuseAccessibilityService.instance?.captureRegion(rect) ?: ""
         boxFallbackText = accessText
+        boxImageBitmap = null
         removeSelection()
         postText = ""
         showPanel()

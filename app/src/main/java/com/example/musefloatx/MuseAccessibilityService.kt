@@ -40,12 +40,12 @@ class MuseAccessibilityService : AccessibilityService() {
         lastCaptureMs = now
         try {
             val root = rootInActiveWindow ?: return
-            if (root.packageName?.toString() != X_PACKAGE) return
+            // 通用识别：不再写死 X 包名，任何 App 的前台窗口都认。
             val lines = LinkedHashSet<String>()
             collect(root, lines, 0)
             val text = lines.joinToString("\n").take(4000)
             if (text.length >= 20) {
-                ScreenSnapshotHub.update(text, X_PACKAGE)
+                ScreenSnapshotHub.update(text, root.packageName?.toString() ?: "")
             }
         } catch (e: Exception) {
             // 忽略单次读取失败，不中断服务
@@ -53,14 +53,14 @@ class MuseAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * 只读用户框选区域内的文字：取中心点落在框内的叶子节点，
-     * 按从上到下、从左到右排序去重。主帖被评论区淹没时，
-     * 用户框住主帖就能只认主帖，不读评论区。
+     * 通用框选无障碍兜底：只读用户框选区域内的文字，取中心点落在
+     * 框内的叶子节点，按从上到下、从左到右排序去重。
+     * 不写死任何 App 包名，X、ChatGPT、浏览器都走同一条路；
+     * 框选主流程是截图裁剪 OCR，这里只在 OCR 失败时兜底。
      */
     fun captureRegion(rect: Rect): String {
         try {
             val root = rootInActiveWindow ?: return ""
-            if (root.packageName?.toString() != X_PACKAGE) return ""
             val items = mutableListOf<Triple<Int, Int, String>>()
             collectRegion(root, rect, items, 0)
             val seen = LinkedHashSet<String>()
