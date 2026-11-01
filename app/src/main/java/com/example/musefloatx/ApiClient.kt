@@ -38,11 +38,12 @@ object ApiClient {
             val system = "你是一个回复助手。只输出回复正文，不要解释、不要加引号、不要加前后缀。" +
                 "回复语言与帖子语言保持一致：中文帖子用中文，英文帖子用英文，其他语言用该语言。" +
                 styleInstruction(style)
-            val user = "当前应用：X\n帖子内容：\n" + postText.take(4000) + "\n\n请生成一条合适的回复。用户会自己复制粘贴，不要自动发送。"
+            val user = "当前应用：X\n帖子内容：\n" + postText.take(2000) + "\n\n请生成一条合适的回复。用户会自己复制粘贴，不要自动发送。"
             val body = JSONObject().apply {
                 put("model", model)
                 put("stream", false)
                 put("temperature", 0.7)
+                put("max_tokens", 400)
                 put("messages", JSONArray().apply {
                     put(JSONObject().apply { put("role", "system"); put("content", system) })
                     put(JSONObject().apply { put("role", "user"); put("content", user) })
@@ -75,6 +76,83 @@ object ApiClient {
                     }
                     else -> ""
                 }.trim()
+                if (text.isBlank()) Result.failure(Exception("服务返回了空回复"))
+                else Result.success(text)
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception(e.message ?: "请求失败"))
+        }
+    }
+
+    /**
+     * 流式生成：服务端边生成边用 SSE 吐字，App 每收到一片就回调，
+     * 面板上先出字、再出完整回复，体感上比等全文返回快很多。
+     * muse2api 的 /v1/chat/completions 支持 stream=true，chunk 格式为
+     * data: {"choices":[{"delta":{"content":"..."}}]}，以 data: [DONE] 结束。
+     */
+    suspend fun generateStream(
+        baseUrl: String,
+        apiKey: String,
+        model: String,
+        style: String,
+        postText: String,
+        onDelta: (String) -> Unit
+    ): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            if (baseUrl.isBlank()) return@withContext Result.failure(Exception("请先在设置里填写 AI 服务地址"))
+            if (apiKey.isBlank()) return@withContext Result.failure(Exception("请先在设置里填写 API 密钥"))
+            val system = "你是一个回复助手。只输出回复正文，不要解释、不要加引号、不要加前后缀。" +
+                "回复语言与帖子语言保持一致：中文帖子用中文，英文帖子用英文，其他语言用该语言。" +
+                styleInstruction(style)
+            val user = "当前应用：X\n帖子内容：\n" + postText.take(2000) + "\n\n请生成一条合适的回复。用户会自己复制粘贴，不要自动发送。"
+            val body = JSONObject().apply {
+                put("model", model)
+                put("stream", true)
+                put("temperature", 0.7)
+                put("max_tokens", 400)
+                put("messages", JSONArray().apply {
+                    put(JSONObject().apply { put("role", "system"); put("content", system) })
+                    put(JSONObject().apply { put("role", "user"); put("content", user) })
+                })
+            }
+            val req = Request.Builder()
+                .url("$baseUrl/v1/chat/completions")
+                .addHeader("Authorization", "Bearer $apiKey")
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Accept", "text/event-stream")
+                .post(body.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    val raw = resp.body?.string() ?: ""
+                    return@withContext Result.failure(Exception("HTTP ${resp.code}：${raw.take(500)}"))
+                }
+                val source = resp.body?.source()
+                    ?: return@withContext Result.failure(Exception("服务返回为空"))
+                val sb = StringBuilder()
+                while (true) {
+                    val line = try { source.readUtf8Line() } catch (e: Exception) { break } ?: break
+                    if (!line.startsWith("data:")) continue
+                    val data = line.removePrefix("data:").trim()
+                    if (data.isBlank()) continue
+                    if (data == "[DONE]") break
+                    try {
+                        val json = JSONObject(data)
+                        val err = json.optJSONObject("error")
+                        if (err != null) {
+                            return@withContext Result.failure(Exception(err.optString("message", "服务返回错误")))
+                        }
+                        val delta = json.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("delta")
+                        val piece = delta?.optString("content", "") ?: ""
+                        if (piece.isNotEmpty()) {
+                            sb.append(piece)
+                            onDelta(piece)
+                        }
+                    } catch (e: Exception) {
+                        // 跳过个别畸形行，不中断整段流
+                    }
+                }
+                val text = sb.toString().trim()
                 if (text.isBlank()) Result.failure(Exception("服务返回了空回复"))
                 else Result.success(text)
             }

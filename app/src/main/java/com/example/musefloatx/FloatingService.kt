@@ -34,7 +34,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -303,9 +302,9 @@ class FloatingService : Service() {
                         Text("AI 回复", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                         Text(statusText, fontSize = 12.sp, color = Color.Gray)
                         Spacer(Modifier.height(6.dp))
-                        SelectionContainer {
-                            Text(if (replyText.isBlank()) "" else replyText, fontSize = 15.sp)
-                        }
+                        // 不再用长按选中容器：它会和面板滑动抢手势，是滑不动、卡顿的原因之一。
+                        // 复制统一走下面的“复制”按钮。
+                        Text(if (replyText.isBlank()) "" else replyText, fontSize = 15.sp)
                         Spacer(Modifier.height(12.dp))
                         Row {
                             Button(onClick = { copyReply() }, modifier = Modifier.padding(end = 8.dp)) { Text("复制") }
@@ -334,7 +333,7 @@ class FloatingService : Service() {
     }
 
     private fun refreshPostOnly() {
-        MuseAccessibilityService.instance?.captureNow()
+        MuseAccessibilityService.instance?.captureNow(force = true)
         val t = ScreenSnapshotHub.freshText()
         if (!t.isNullOrBlank()) {
             postText = t
@@ -359,8 +358,22 @@ class FloatingService : Service() {
         statusText = "生成中…"
         replyText = ""
         scope.launch {
-            val r = ApiClient.generate(store.baseUrl, store.apiKey, store.model, styleState, text)
-            r.onSuccess {
+            // 先走流式：字一出来面板上就先显示，不用等全文。
+            // 流式失败且一字没出时，再用非流式兜底一次。
+            val streamResult = ApiClient.generateStream(store.baseUrl, store.apiKey, store.model, styleState, text) { piece ->
+                replyText += piece
+            }
+            if (streamResult.isSuccess) {
+                replyText = streamResult.getOrNull()?.trim() ?: replyText
+                statusText = "已生成"
+                return@launch
+            }
+            if (replyText.isNotBlank()) {
+                statusText = "已生成（部分）"
+                return@launch
+            }
+            val fallback = ApiClient.generate(store.baseUrl, store.apiKey, store.model, styleState, text)
+            fallback.onSuccess {
                 replyText = it
                 statusText = "已生成"
             }.onFailure {

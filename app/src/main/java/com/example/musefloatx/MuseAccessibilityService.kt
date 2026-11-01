@@ -12,6 +12,8 @@ class MuseAccessibilityService : AccessibilityService() {
         const val X_PACKAGE = "com.twitter.android"
     }
 
+    @Volatile private var lastCaptureMs = 0L
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
@@ -31,7 +33,12 @@ class MuseAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    fun captureNow() {
+    fun captureNow(force: Boolean = false) {
+        // 无障碍事件在滑动时来得非常密，每次都全树遍历会让 X 和手机都卡。
+        // 自动抓取节流到 1 秒一次，手动点球、点重新识别时 force=true 不节流。
+        val now = System.currentTimeMillis()
+        if (!force && now - lastCaptureMs < 1000) return
+        lastCaptureMs = now
         try {
             val root = rootInActiveWindow ?: return
             if (root.packageName?.toString() != X_PACKAGE) return
