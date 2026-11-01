@@ -122,7 +122,7 @@ class FloatingService : Service() {
     private var pasteText by mutableStateOf("")
     private var boxImageBitmap by mutableStateOf<android.graphics.Bitmap?>(null)
     private var replyText by mutableStateOf("")
-    private var statusText by mutableStateOf("点悬浮球后自动识别")
+    private var statusText by mutableStateOf("先在 X 里复制帖子，再点悬浮球，面板会读取剪贴板生成")
     private var styleState by mutableStateOf("自然")
 
     override fun onCreate() {
@@ -265,11 +265,47 @@ class FloatingService : Service() {
             removePanel()
             return
         }
-        // 用户要求：点球直接出框，跟以前一样，不弹录屏许可、
-        // 不跳到 MuseFloatX 主页。冻屏要先启动一个 Activity 截图，
-        // 安卓会把 MuseFloatX 任务切到前台、盖住 X，还要弹录屏许可，
-        // 所以冻屏路线废弃，改回透明框直接出。
-        showSelectionOverlay()
+        // 简化后的主流程（第 24 版）：点球直接出面板，不再出框选、
+        // 不截图、不 OCR。面板打开时立刻读一次剪贴板（这是用户
+        // 点球这个动作触发的，不是后台持续监听），读到就直接生成，
+        // 读不到就只提示、不发无效请求，留手动粘贴输入框作备用。
+        showPanel()
+        readClipboardAndGenerate()
+    }
+
+    /**
+     * 剪贴板主流程：用户点球后读一次最新剪贴板。
+     * 安卓 12+ 对后台读剪贴板有限制，但这是用户点球触发的当次读取，
+     * 且服务是前台服务；系统若不允许，primaryClip 会是空或抛异常，
+     * 那就只提示、不生成，用户改用面板里的手动粘贴输入框。
+     * 绝不后台持续监听剪贴板。
+     */
+    private fun readClipboardAndGenerate() {
+        try {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val clip = cm.primaryClip
+            val t = if (clip != null && clip.itemCount > 0) {
+                clip.getItemAt(0)?.text?.toString()?.trim() ?: ""
+            } else ""
+            if (t.length >= 5) {
+                postText = t
+                pasteText = t
+                replyText = ""
+                generate()
+            } else if (t.isNotEmpty()) {
+                postText = ""
+                replyText = ""
+                statusText = "剪贴板内容太短（不到 5 个字），不会发送：先在 X 里复制整条帖子，再点悬浮球；或在下面输入框手动粘贴"
+            } else {
+                postText = ""
+                replyText = ""
+                statusText = "剪贴板是空的，不会发送无效请求：先在 X 里复制帖子，再点悬浮球；如果系统不让直接读剪贴板，就在下面输入框长按粘贴"
+            }
+        } catch (e: Exception) {
+            postText = ""
+            replyText = ""
+            statusText = "系统不允许直接读剪贴板，不会发送：请在下面输入框长按粘贴帖子，再点“用粘贴的内容生成”"
+        }
     }
 
     private fun showPanel() {
@@ -333,10 +369,10 @@ class FloatingService : Service() {
                             )
                         }
                         Spacer(Modifier.height(12.dp))
-                        // 粘贴模式（最终办法）：在 X 里复制帖子内容，到这里
-                        // 点输入框长按粘贴，或者点“从剪贴板粘贴”，再点生成。
-                        // 不读屏、不截图、不依赖无障碍窗口，复制什么就生成什么。
-                        Text("粘贴帖子（最稳）", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        // 手动粘贴输入框（备用）：只有系统不让直接读剪贴板时才用，
+                        // 在 X 里复制帖子内容，到这里点输入框长按粘贴，再点生成。
+                        // 不读屏、不截图、不依赖无障碍窗口，粘贴什么就生成什么。
+                        Text("手动粘贴（备用）", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                         Spacer(Modifier.height(6.dp))
                         OutlinedTextField(
                             value = pasteText,
@@ -381,14 +417,12 @@ class FloatingService : Service() {
                         Spacer(Modifier.height(12.dp))
                         Row {
                             Button(onClick = { copyReply() }, modifier = Modifier.padding(end = 8.dp)) { Text("复制") }
-                            // 重新生成只对当前框选文字再生成一次，不再自动重认全屏，
-                            // 否则框选的主帖会被自动识别的评论区覆盖掉。
+                            // 重新生成只对当前原文再生成一次，不重读剪贴板，
+                            // 避免面板开着时剪贴板已被别的内容覆盖。
                             OutlinedButton(onClick = { generate() }, modifier = Modifier.padding(end = 8.dp)) { Text("重新生成") }
-                            OutlinedButton(onClick = { ocrFlow() }) { Text("截图识别") }
-                        }
-                        Spacer(Modifier.height(8.dp))
-                        Row {
-                            OutlinedButton(onClick = { showSelectionOverlay() }) { Text("框选识别") }
+                            // 简化后不再有截图/框选入口：主流程就是剪贴板，
+                            // 读不到时用下面手动粘贴输入框，不再依赖 OCR。
+                            OutlinedButton(onClick = { readClipboardAndGenerate() }) { Text("读取剪贴板") }
                         }
                         Spacer(Modifier.height(6.dp))
                         Text("只生成建议，不会自动发送，请你自己粘贴。点一下悬浮球也能关闭面板。", fontSize = 12.sp, color = Color.Gray)
