@@ -12,6 +12,6 @@ package com.example.musefloatx
  * 留空表示没有默认地址，App 里需要手动填服务地址。
  */
 object DefaultEndpoint {
-    const val BASE_URL = "http://10.185.175.157:18610"
+    const val BASE_URL = "http://10.47.12.157:18610"
     const val MODEL = "muse-spark"
 }
