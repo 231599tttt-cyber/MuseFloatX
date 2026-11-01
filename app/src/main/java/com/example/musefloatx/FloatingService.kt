@@ -443,19 +443,19 @@ class FloatingService : Service() {
                         Spacer(Modifier.height(6.dp))
                         // 不再用长按选中容器：它会和面板滑动抢手势，是滑不动、卡顿的原因之一。
                         // 复制统一走下面的“复制”按钮。
-                        Text(if (replyText.isBlank()) "" else replyText, fontSize = 15.sp)
+                        Text(if (replyText.isBlank()) "" else replyText, fontSize = 16.sp)
                         Spacer(Modifier.height(12.dp))
                         Row {
                             Button(onClick = { copyReply() }, modifier = Modifier.padding(end = 8.dp)) { Text("复制") }
                             // 重新生成只对当前原文再生成一次，不重读剪贴板，
                             // 避免面板开着时剪贴板已被别的内容覆盖。
                             OutlinedButton(onClick = { generate() }, enabled = !isGenerating, modifier = Modifier.padding(end = 8.dp)) { Text("重新生成") }
-                            // 简化后不再有截图/框选入口：主流程就是剪贴板，
-                            // 读不到时用下面手动粘贴输入框，不再依赖 OCR。
-                            OutlinedButton(onClick = { readClipboardAndGenerate() }, enabled = !isGenerating) { Text("读取剪贴板") }
+                            // 面板整洁：点球已经读过剪贴板了，“读取剪贴板”就是多余的，
+                            // 留着只会让人手滑再提交一次，已删掉。新帖子请关面板、
+                            // 重新复制、再点球，那才是新的一次提交。
                         }
                         Spacer(Modifier.height(6.dp))
-                        Text("只生成建议，不会自动发送，请你自己粘贴。点一下悬浮球也能关闭面板。", fontSize = 12.sp, color = Color.Gray)
+                        Text("不会自动发送，请自己复制粘贴。点悬浮球可关闭面板。", fontSize = 12.sp, color = Color.Gray)
                     }
                 }
             }
