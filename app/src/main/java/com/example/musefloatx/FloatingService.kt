@@ -478,7 +478,8 @@ class FloatingService : Service() {
         //    不是重复提交。先把当前那一通取消（断 HTTP、服务端释锁，
         //    旧的不会继续跑完），再用新风格提交一次，同一原文。
         //    这是替换，不是叠加：任何时刻服务端只跑一个。
-        if (isGenerating && s == styleState) return
+        if (isGenerating && generateJob?.isActive == true && s == styleState) return
+        if (isGenerating && generateJob?.isActive != true) isGenerating = false
         if (postText.isBlank()) {
             statusText = "先在 X 里复制帖子，再点悬浮球；或在下面手动粘贴框长按粘贴，再点生成"
             return
@@ -507,7 +508,15 @@ class FloatingService : Service() {
         // 当前那一通、把 isGenerating 清掉，再调 generate() 提交新风格，
         // 那是替换一通，不是叠加一通。序号守卫只留作关面板竞态的安全网，
         // 不是用来遮掩多次提交的。
-        if (isGenerating) return
+        // 关键修复：不能只看 isGenerating 标志就挡住——万一上一次的
+        // 任务已经结束但标志没清掉（比如被取消后没走到清标志那行），
+        // 之后点球、手动粘贴、点风格都会静默没反应，看起来就是“啥用没有”。
+        // 只有任务真的还在跑时才挡；任务已经不在跑了，就把标志清掉、正常提交。
+        if (isGenerating && generateJob?.isActive == true) {
+            statusText = "正在生成，等一下"
+            return
+        }
+        if (isGenerating) isGenerating = false
         generateSeq += 1
         val mySeq = generateSeq
         isGenerating = true
@@ -603,7 +612,11 @@ class FloatingService : Service() {
             } else ""
             if (t.isNotEmpty()) {
                 pasteText = t
-                statusText = "已从剪贴板粘贴，点“用粘贴的内容生成”即可"
+                postText = t
+                // 手动粘贴也要一键生成：之前只填框、不生成，还要再点
+                // 一次生成按钮，用户以为粘贴完就该生成了，结果就是“没反应”。
+                // 现在粘贴完直接提交一次，跟点球自动粘贴、自动生成一样。
+                generate()
             } else {
                 statusText = "剪贴板是空的：先在 X 里复制帖子，再点这个按钮；或点输入框长按粘贴"
             }
