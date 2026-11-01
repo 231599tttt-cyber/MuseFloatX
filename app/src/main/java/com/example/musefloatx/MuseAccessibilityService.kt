@@ -10,6 +10,9 @@ class MuseAccessibilityService : AccessibilityService() {
     companion object {
         @Volatile var instance: MuseAccessibilityService? = null
         const val X_PACKAGE = "com.twitter.android"
+        // 自己的包名写死：AccessibilityWindowInfo 本身没有 packageName，
+        // 只能用窗口根节点的 packageName 判断是不是自己，写错就会编失败。
+        const val OWN_PACKAGE = "com.example.musefloatx"
     }
 
     @Volatile private var lastCaptureMs = 0L
@@ -30,12 +33,12 @@ class MuseAccessibilityService : AccessibilityService() {
         // 点球、框选、确认之前什么都不出；生成只在点确认后发生。
         try {
             val pkg = event?.packageName?.toString() ?: return
-            if (pkg == packageName) return
+            if (pkg == OWN_PACKAGE) return
             val now = System.currentTimeMillis()
             if (now - lastCaptureMs < 1000) return
             lastCaptureMs = now
             val root = rootInActiveWindow ?: return
-            if (root.packageName?.toString() == packageName) return
+            if (root.packageName?.toString() == OWN_PACKAGE) return
             val items = mutableListOf<Triple<Int, Int, String>>()
             collectAllItems(root, items, 0)
             if (items.isNotEmpty()) {
@@ -111,8 +114,8 @@ class MuseAccessibilityService : AccessibilityService() {
             if (wins != null) {
                 for (w in wins) {
                     try {
-                        if (w.packageName?.toString() == packageName) continue
                         val root = w.root ?: continue
+                        if (root.packageName?.toString() == OWN_PACKAGE) continue
                         val c = collectRegionText(root, rect, strictCenter = true)
                         if (c.length > best.length) best = c
                         if (c.length < 5) {
@@ -129,7 +132,7 @@ class MuseAccessibilityService : AccessibilityService() {
         // 第二路：老路，当前窗口直接读（中心先行，相交兜底）。
         try {
             val root = rootInActiveWindow
-            if (root != null && root.packageName?.toString() != packageName) {
+            if (root != null && root.packageName?.toString() != OWN_PACKAGE) {
                 val center = collectRegionText(root, rect, strictCenter = true)
                 if (center.length >= 5) return center
                 val inter = collectRegionText(root, rect, strictCenter = false)
