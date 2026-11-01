@@ -322,12 +322,12 @@ class FloatingService : Service() {
             } else {
                 postText = ""
                 replyText = ""
-                statusText = "剪贴板是空的，不会发送无效请求：先在 X 里复制帖子，再点悬浮球；如果系统不让直接读剪贴板，就在下面输入框长按粘贴"
+                statusText = "剪贴板是空的：先在 X 里复制帖子，再点悬浮球"
             }
         } catch (e: Exception) {
             postText = ""
             replyText = ""
-            statusText = "系统不允许直接读剪贴板，不会发送：请在下面输入框长按粘贴帖子，再点“用粘贴的内容生成”"
+            statusText = "系统不允许直接读剪贴板：请关面板、重新复制、再点悬浮球"
         }
     }
 
@@ -391,41 +391,11 @@ class FloatingService : Service() {
                                 modifier = Modifier.fillMaxWidth().heightIn(max = 180.dp)
                             )
                         }
-                        // 手动粘贴区只在自动读剪贴板失败时显示（帖子为空时）：
-                        // 正常情况点球已经自动粘贴、自动按上次的风格生成了，
-                        // “用粘贴的内容生成”这个按钮就是多余的，留着只会让人
-                        // 手滑再点一次、再提交一次。风格按钮本身就是生成按钮：
-                        // 上次选了自然，点球就按自然生成；再点幽默，就切换一次。
-                        if (postText.isBlank()) {
-                            Spacer(Modifier.height(12.dp))
-                            // 手动粘贴输入框（备用）：只有系统不让直接读剪贴板时才用，
-                            // 在 X 里复制帖子内容，到这里点输入框长按粘贴，再点生成。
-                            // 不读屏、不截图、不依赖无障碍窗口，粘贴什么就生成什么。
-                            Text("手动粘贴（备用）", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                            Spacer(Modifier.height(6.dp))
-                            OutlinedTextField(
-                                value = pasteText,
-                                onValueChange = { pasteText = it },
-                                placeholder = { Text("先在 X 里复制帖子，到这里长按粘贴") },
-                                modifier = Modifier.fillMaxWidth(),
-                                minLines = 3,
-                                maxLines = 8
-                            )
-                            Spacer(Modifier.height(8.dp))
-                            Row {
-                                Button(onClick = {
-                                    val t = pasteText.trim()
-                                    if (t.isNotEmpty()) {
-                                        postText = t
-                                        generate()
-                                    } else {
-                                        statusText = "先粘贴帖子内容再点生成"
-                                    }
-                                }, enabled = !isGenerating, modifier = Modifier.padding(end = 8.dp)) { Text("用粘贴的内容生成") }
-                                OutlinedButton(onClick = { pasteFromClipboard() }) { Text("从剪贴板粘贴") }
-                            }
-                            Spacer(Modifier.height(12.dp))
-                        }
+                        // “用粘贴的内容生成”按钮已直接删掉，连同手动粘贴区一起删掉：
+                        // 流程就是复制内容、点小球，已经自动粘贴好、已经开始生成，
+                        // 就这样，不需要再手动贴一次、再点一次生成。
+                        // 自动读不到时，面板会提示先复制再点球，关面板、重新复制、
+                        // 再点球就是新的一次提交，不再留一个多余的生成按钮。
                         Text("风格", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                         Row {
                             listOf("自然", "幽默", "简短").forEach { s ->
@@ -481,7 +451,7 @@ class FloatingService : Service() {
         if (isGenerating && generateJob?.isActive == true && s == styleState) return
         if (isGenerating && generateJob?.isActive != true) isGenerating = false
         if (postText.isBlank()) {
-            statusText = "先在 X 里复制帖子，再点悬浮球；或在下面手动粘贴框长按粘贴，再点生成"
+            statusText = "先在 X 里复制帖子，再点悬浮球"
             return
         }
         if (isGenerating) {
@@ -496,7 +466,7 @@ class FloatingService : Service() {
     private fun generate() {
         val text = postText
         if (text.isBlank()) {
-            statusText = "先在 X 里复制帖子，再点悬浮球；或在下面手动粘贴框长按粘贴，再点生成"
+            statusText = "先在 X 里复制帖子，再点悬浮球"
             return
         }
         // 根本逻辑：提交一次、生成一次、传输一次。

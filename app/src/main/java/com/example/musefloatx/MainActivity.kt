@@ -60,7 +60,7 @@ class MainActivity : ComponentActivity() {
                         .verticalScroll(rememberScrollState())
                 ) {
                     Text("MuseFloatX", fontSize = 24.sp, fontWeight = FontWeight.Bold)
-                    Text("版本：第 32 版（修复版），装好后这里必须显示第 32 版才算新版。", fontSize = 13.sp)
+                    Text("版本：第 33 版（修复版），装好后这里必须显示第 33 版才算新版。", fontSize = 13.sp)
                     Text("只在 X 里用的悬浮回复助手：你在 X 里复制帖子，点悬浮球，面板读剪贴板生成回复建议，你自己复制粘贴，不自动发送。不读屏、不截图、不需要无障碍。", fontSize = 14.sp)
                     Spacer(Modifier.height(16.dp))
 
@@ -136,7 +136,7 @@ class MainActivity : ComponentActivity() {
                         }) { Text("停止") }
                     }
                     Spacer(Modifier.height(16.dp))
-                    Text("使用方法：先在 X 里复制帖子，再点悬浮球，就按上次选的风格生成一次；想换风格，点另一个风格就切换一次；同风格想换一句，点重新生成。回复都是一句话、十几二十个字，点复制后去 X 粘贴，不自动发送。没复制就点球，面板会是空的、点什么都不会生成；系统不让直接读时，面板里会显示手动粘贴，长按粘贴再生成。不需要无障碍，不截图，不 OCR。", fontSize = 13.sp)
+                    Text("使用方法：先在 X 里复制帖子，再点悬浮球，就按上次选的风格生成一次；想换风格，点另一个风格就切换一次；同风格想换一句，点重新生成。回复都是一句话、十几二十个字，点复制后去 X 粘贴，不自动发送。没复制就点球，面板会是空的；自动读不到时，关面板、重新复制、再点球。不需要无障碍，不截图，不 OCR。", fontSize = 13.sp)
                 }
             }
         }
