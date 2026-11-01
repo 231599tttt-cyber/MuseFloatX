@@ -20,6 +20,7 @@ import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.input.pointer.awaitPointerEventScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -81,7 +82,17 @@ class FloatingService : Service() {
     private var selectionCurrent by mutableStateOf(Offset.Zero)
     private var selecting by mutableStateOf(false)
     private var selectionBox by mutableStateOf<Rect?>(null)
+    private var tapStart by mutableStateOf<Offset?>(null)
     private var selectionReturnToPanel = false
+
+    private fun unionRect(a: Rect, b: Rect): Rect {
+        return Rect(
+            minOf(a.left, b.left),
+            minOf(a.top, b.top),
+            maxOf(a.right, b.right),
+            maxOf(a.bottom, b.bottom)
+        )
+    }
     private var ballParams: WindowManager.LayoutParams? = null
     private var ballX = 0
     private var ballY = 0
@@ -362,8 +373,9 @@ class FloatingService : Service() {
         }
     }
 
-    private fun ocrFlow() {
-        statusText = "正在截图识别（本地识别，不上传）…"
+    private fun ocrFlow(cropRect: Rect? = null) {
+        CaptureHub.cropRect = cropRect
+        statusText = if (cropRect != null) "正在截图识别框内文字（本地识别，不上传）…" else "正在截图识别（本地识别，不上传）…"
         val intent = Intent(this, CaptureActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
@@ -418,6 +430,7 @@ class FloatingService : Service() {
         selectionStart = Offset.Zero
         selectionCurrent = Offset.Zero
         selectionBox = null
+        tapStart = null
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -432,41 +445,104 @@ class FloatingService : Service() {
         val view = ComposeView(this)
         attachOwners(view)
         view.setContent {
-            // 框选 v2：松手不再直接结束，框留住，等用户点“确认识别”才认；
-            // 框太小、拖动取消都不直接回面板，留在框选里重框；
-            // 提示条改到底部，顶部不再挡住帖子左上角，框不用贴到屏幕边，
-            // 只要盖住帖子文字就行。
+            // 框选 v3：解决三个问题。
+            // 1. 边缘返回：框选层左右各 120px 设为系统手势排除区，
+            //    从左/右边缘开始拖不再触发系统返回手势。
+            // 2. 点按定角：不用拖也能框，点一下定一个角、再点一下定另一个角，
+            //    点按本身不触发返回手势，左上角点不到的问题就没了，
+            //    框也不用贴到屏幕边，只要盖住帖子文字就行。
+            // 3. 可继续扩框：松手后框留住，再拖一次是把新框和旧框并起来，
+            //    不是重开；换个方位接着拉，直到满意点确认识别。
+            //    只有点“重新框选”才会清掉旧框重来。
+            // 手势只用最基础的 pressed/previousPressed/position 字段，避免旧版手势 API 失效。
             Box(modifier = Modifier.fillMaxSize()) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .pointerInput(Unit) {
-                            detectDragGestures(
-                                onDragStart = { offset ->
-                                    selectionBox = null
-                                    selectionStart = offset
-                                    selectionCurrent = offset
-                                    selecting = true
-                                },
-                                onDragEnd = {
-                                    selecting = false
-                                    val left = minOf(selectionStart.x, selectionCurrent.x).toInt()
-                                    val top = minOf(selectionStart.y, selectionCurrent.y).toInt()
-                                    val right = maxOf(selectionStart.x, selectionCurrent.x).toInt()
-                                    val bottom = maxOf(selectionStart.y, selectionCurrent.y).toInt()
-                                    if (right - left < 80 || bottom - top < 80) {
-                                        selectionBox = null
-                                        Toast.makeText(this@FloatingService, "框太小，请重新框选", Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        selectionBox = Rect(left, top, right, bottom)
+                            awaitPointerEventScope {
+                                while (true) {
+                                    var downId: PointerId? = null
+                                    var downPos = Offset.Zero
+                                    while (downId == null) {
+                                        val event = awaitPointerEvent()
+                                        val change = event.changes.firstOrNull { it.pressed && !it.previousPressed }
+                                        if (change != null) {
+                                            downId = change.id
+                                            downPos = change.position
+                                        }
                                     }
-                                },
-                                onDragCancel = { selecting = false },
-                                onDrag = { change, _ ->
-                                    change.consume()
-                                    selectionCurrent = change.position
+                                    val startPos = downPos
+                                    var currentPos = startPos
+                                    var isDrag = false
+                                    var up = false
+                                    while (!up) {
+                                        val event = awaitPointerEvent()
+                                        val change = event.changes.firstOrNull { it.id == downId }
+                                        if (change == null) continue
+                                        if (!change.pressed) {
+                                            up = true
+                                            break
+                                        }
+                                        if (change.position != currentPos) {
+                                            if ((change.position - startPos).getDistance() > viewConfiguration.touchSlop) {
+                                                isDrag = true
+                                                selecting = true
+                                                selectionStart = startPos
+                                                selectionCurrent = change.position
+                                                currentPos = change.position
+                                                change.consume()
+                                            }
+                                        }
+                                    }
+                                    selecting = false
+                                    if (isDrag) {
+                                        tapStart = null
+                                        val dragRect = Rect(
+                                            minOf(startPos.x, currentPos.x).toInt(),
+                                            minOf(startPos.y, currentPos.y).toInt(),
+                                            maxOf(startPos.x, currentPos.x).toInt(),
+                                            maxOf(startPos.y, currentPos.y).toInt()
+                                        )
+                                        val old = selectionBox
+                                        if (old == null) {
+                                            if (dragRect.width() < 80 || dragRect.height() < 80) {
+                                                Toast.makeText(this@FloatingService, "框太小，请重新框选", Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                selectionBox = dragRect
+                                            }
+                                        } else {
+                                            // 继续扩框：新框和旧框并起来，不重开。
+                                            selectionBox = unionRect(old, dragRect)
+                                        }
+                                    } else {
+                                        // 点按定角：第一次点定一个角，第二次点成框。
+                                        val first = tapStart
+                                        if (first == null) {
+                                            tapStart = startPos
+                                            Toast.makeText(this@FloatingService, "已定一个角，再点一下定另一个角", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            tapStart = null
+                                            val tapRect = Rect(
+                                                minOf(first.x, startPos.x).toInt(),
+                                                minOf(first.y, startPos.y).toInt(),
+                                                maxOf(first.x, startPos.x).toInt(),
+                                                maxOf(first.y, startPos.y).toInt()
+                                            )
+                                            val old = selectionBox
+                                            if (old == null) {
+                                                if (tapRect.width() < 80 || tapRect.height() < 80) {
+                                                    Toast.makeText(this@FloatingService, "两个点太近，请重新点", Toast.LENGTH_SHORT).show()
+                                                } else {
+                                                    selectionBox = tapRect
+                                                }
+                                            } else {
+                                                selectionBox = unionRect(old, tapRect)
+                                            }
+                                        }
+                                    }
                                 }
-                            )
+                            }
                         }
                 ) {
                     Canvas(modifier = Modifier.fillMaxSize()) {
@@ -491,6 +567,14 @@ class FloatingService : Service() {
                                 style = Stroke(width = 6f)
                             )
                         }
+                        val tap = tapStart
+                        if (tap != null) {
+                            drawCircle(
+                                color = Color(0xFF7C4DFF),
+                                radius = 24f,
+                                center = tap
+                            )
+                        }
                     }
                 }
                 Row(
@@ -503,7 +587,7 @@ class FloatingService : Service() {
                 ) {
                     if (selectionBox == null) {
                         Text(
-                            "拖动框选帖子文字，松手后框会留住，不用贴到屏幕边",
+                            "点一下定角、再点一下成框，或直接拖动；松手后框留住，可继续拖扩大，满意点确认识别",
                             color = Color.White,
                             fontSize = 14.sp,
                             modifier = Modifier.weight(1f)
@@ -515,7 +599,7 @@ class FloatingService : Service() {
                             modifier = Modifier.padding(end = 8.dp)
                         ) { Text("确认识别") }
                         OutlinedButton(
-                            onClick = { selectionBox = null },
+                            onClick = { selectionBox = null; tapStart = null },
                             modifier = Modifier.padding(end = 8.dp)
                         ) { Text("重新框选") }
                         OutlinedButton(onClick = { cancelSelection() }) { Text("取消") }
@@ -526,6 +610,18 @@ class FloatingService : Service() {
         selectionView = view
         try {
             wm.addView(view, params)
+            // 边缘返回排除：左右边缘各 120px 不再触发系统返回手势，
+            // 从左上角开始框也不会被系统抢走。
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                view.post {
+                    try {
+                        view.systemGestureExclusionRects = listOf(
+                            Rect(0, 0, 120, view.height),
+                            Rect(view.width - 120, 0, view.width, view.height)
+                        )
+                    } catch (e: Exception) {}
+                }
+            }
         } catch (e: Exception) {
             selectionView = null
             Toast.makeText(this, "框选打开失败：${e.message}", Toast.LENGTH_SHORT).show()
@@ -548,10 +644,21 @@ class FloatingService : Service() {
         // 这就是框了帖子却认不到的原因之一。
         val text = MuseAccessibilityService.instance?.captureRegion(rect) ?: ""
         removeSelection()
-        if (text.isBlank()) {
+        // 关键兜底：全框住了还只认到“返回 发帖”这种界面按钮，说明 X 的主帖
+        // 文字根本不在无障碍树里，框再大也没用。这时不再拿界面按钮去生成
+        // 一句无关的回复，而是自动改用框内截图 OCR：只裁框内像素来认，
+        // 像素里主帖文字是实实在在看得见的，不依赖无障碍树。
+        // 注意：这一步会弹系统录屏许可，点“开始”才认得出来，点取消就认不到。
+        val compact = text.replace("\\s".toRegex(), "")
+        val headerOnly = text.isBlank() || compact.length < 10
+        if (headerOnly) {
             postText = ""
-            statusText = "框选区域内没有读到文字，请把框画大一点，框住帖子文字"
-        } else if (text.length < 5) {
+            showPanel()
+            statusText = "无障碍只读到界面按钮，没读到主帖，正在改用框内截图识别…"
+            ocrFlow(cropRect = rect)
+            return
+        }
+        if (text.length < 5) {
             postText = text
             statusText = "框选到的文字太短，请把框画大一点"
         } else {
@@ -567,6 +674,7 @@ class FloatingService : Service() {
         selectionView = null
         selecting = false
         selectionBox = null
+        tapStart = null
     }
 
     private fun removeViews() {

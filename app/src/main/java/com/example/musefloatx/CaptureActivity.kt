@@ -89,8 +89,19 @@ class CaptureActivity : Activity() {
 
     private fun recognize(bitmap: Bitmap) {
         try {
+            // 框选截图：只认框内像素，不认框外评论区；框外像素裁掉，
+            // 哪怕无障碍树里根本没有主帖文字，像素里也能认出来。
+            val crop = CaptureHub.cropRect
+            CaptureHub.cropRect = null
+            val target = if (crop != null) {
+                val left = crop.left.coerceIn(0, bitmap.width - 1)
+                val top = crop.top.coerceIn(0, bitmap.height - 1)
+                val w = minOf(crop.width(), bitmap.width - left)
+                val h = minOf(crop.height(), bitmap.height - top)
+                if (w > 0 && h > 0) Bitmap.createBitmap(bitmap, left, top, w, h) else bitmap
+            } else bitmap
             val recognizer = TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
-            recognizer.process(InputImage.fromBitmap(bitmap, 0))
+            recognizer.process(InputImage.fromBitmap(target, 0))
                 .addOnSuccessListener { result ->
                     CaptureHub.post(result.text ?: "")
                     finishIfNotDone()

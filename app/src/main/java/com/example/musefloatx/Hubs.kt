@@ -26,6 +26,8 @@ object ScreenSnapshotHub {
 object CaptureHub {
     private val _ocrText = MutableStateFlow<String?>(null)
     val ocrText: StateFlow<String?> = _ocrText
+    // 框选截图时的裁剪框（屏幕像素坐标），CaptureActivity 认完后清掉。
+    @Volatile var cropRect: android.graphics.Rect? = null
     fun post(text: String) { _ocrText.value = text }
     fun clear() { _ocrText.value = null }
 }
