@@ -261,9 +261,11 @@ class FloatingService : Service() {
             removePanel()
             return
         }
-        // 用户要求：点球直接跳框选，不做自动识别。
-        // 先冻屏截图再进裁剪框，框选时 X 页面不会动。
-        enterBoxSelectionWithFreeze()
+        // 用户要求：点球直接出框，跟以前一样，不弹录屏许可、
+        // 不跳到 MuseFloatX 主页。冻屏要先启动一个 Activity 截图，
+        // 安卓会把 MuseFloatX 任务切到前台、盖住 X，还要弹录屏许可，
+        // 所以冻屏路线废弃，改回透明框直接出。
+        showSelectionOverlay()
     }
 
     private fun showPanel() {
@@ -352,7 +354,7 @@ class FloatingService : Service() {
                         }
                         Spacer(Modifier.height(8.dp))
                         Row {
-                            OutlinedButton(onClick = { enterBoxSelectionWithFreeze() }) { Text("框选识别") }
+                            OutlinedButton(onClick = { showSelectionOverlay() }) { Text("框选识别") }
                         }
                         Spacer(Modifier.height(6.dp))
                         Text("只生成建议，不会自动发送，请你自己粘贴。点一下悬浮球也能关闭面板。", fontSize = 12.sp, color = Color.Gray)
@@ -471,44 +473,6 @@ class FloatingService : Service() {
      * 松手后只读框内中心点落入的无障碍文字，不读框外评论区。
      * 框太小算取消，回到面板。
      */
-    private fun enterBoxSelectionWithFreeze() {
-        selectionReturnToPanel = (panelView != null)
-        removePanel()
-        if (selectionView != null) return
-        frozenShotBitmap = null
-        val intent = Intent(this, CaptureActivity::class.java).apply {
-            putExtra("freeze", true)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        startActivity(intent)
-        scope.launch {
-            var waited = 0
-            while (waited < 60000) {
-                val bmp = CaptureHub.frozenBitmap
-                if (bmp != null) {
-                    showSelectionOverlay(bmp)
-                    return@launch
-                }
-                if (CaptureHub.freezeCancelled) {
-                    Toast.makeText(this@FloatingService, "录屏许可被取消，改用透明框选", Toast.LENGTH_SHORT).show()
-                    showSelectionOverlay(null)
-                    return@launch
-                }
-                if (CaptureHub.freezeTimedOut) {
-                    Toast.makeText(this@FloatingService, "冻屏超时，改用透明框选", Toast.LENGTH_SHORT).show()
-                    showSelectionOverlay(null)
-                    return@launch
-                }
-                delay(200)
-                waited += 200
-            }
-            // 60 秒都没等到冻屏结果（比如 Activity 异常退出了），
-            // 绝不能再把框迟到别的 App 上：直接回面板，让用户重新点球。
-            Toast.makeText(this@FloatingService, "冻屏没拿到，请重新点悬浮球", Toast.LENGTH_SHORT).show()
-            if (selectionReturnToPanel) showPanel()
-        }
-    }
-
     private fun showSelectionOverlay(frozenBitmap: android.graphics.Bitmap? = null) {
         selectionReturnToPanel = (panelView != null)
         removePanel()
@@ -775,68 +739,23 @@ class FloatingService : Service() {
     }
 
     private fun finishSelection(rect: Rect) {
-        // 框选确认：如果进入框选时已经冻过屏，直接认冻屏裁剪图，
-        // 不用再弹一次录屏许可；冻屏图就是用户在框选层看到的那张图，
-        // 框住什么像素，认的就是什么，X 页面动不了，也进不来评论区。
-        // 没有冻屏图时（用户取消了冻屏许可，走透明框选），才走老路：
-        // 再弹一次录屏做裁剪 OCR，失败再用无障碍兜底。
+        // 用户要求：确认也不弹录屏许可。X 帖子文字走无障碍直接读，
+        // 不截图、不启动 CaptureActivity、不切任务、不弹录屏许可。
+        // 只有无障碍实在读不到时，才在面板里明说，并让用户自己
+        // 点面板里的“截图识别”再走截图路线（那一步才会弹许可，
+        // 是用户主动选的，不是确认默认带的）。
         val accessText = MuseAccessibilityService.instance?.captureRegion(rect) ?: ""
         boxFallbackText = accessText
         boxImageBitmap = null
-        val frozen = frozenShotBitmap
         removeSelection()
         postText = ""
         showPanel()
-        if (frozen != null) {
-            ocrFrozenBitmap(frozen, rect, accessText)
-            return
-        }
-        statusText = "正在截图识别框内文字（本地识别，不上传），请点开始…"
-        ocrFlow(cropRect = rect)
-    }
-
-    private fun ocrFrozenBitmap(src: android.graphics.Bitmap, rect: Rect, accessText: String) {
-        try {
-            val left = rect.left.coerceIn(0, src.width - 1)
-            val top = rect.top.coerceIn(0, src.height - 1)
-            val w = minOf(rect.width(), src.width - left)
-            val h = minOf(rect.height(), src.height - top)
-            if (w <= 0 || h <= 0) {
-                statusText = "框选区域无效：框太小或超出屏幕，请重新调框"
-                return
-            }
-            val cropped = android.graphics.Bitmap.createBitmap(src, left, top, w, h)
-            boxImageBitmap = cropped
-            statusText = "正在识别冻屏裁剪图（本地识别，不上传）…"
-            val recognizer = TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
-            recognizer.process(InputImage.fromBitmap(cropped, 0))
-                .addOnSuccessListener { result ->
-                    val ocr = result.text?.trim() ?: ""
-                    if (ocr.isBlank()) {
-                        if (accessText.length >= 5) {
-                            postText = accessText
-                            statusText = "冻屏图没认出文字，改用无障碍结果"
-                            generate()
-                        } else {
-                            statusText = "框内截图没有认出文字：框内可能没有文字，或文字太小、太模糊，请把框调大一点、只盖文字"
-                        }
-                    } else {
-                        postText = ocr.take(4000)
-                        statusText = "框选识别完成"
-                        generate()
-                    }
-                }
-                .addOnFailureListener { e ->
-                    if (accessText.length >= 5) {
-                        postText = accessText
-                        statusText = "识别失败：本地 OCR 识别失败：${e.message ?: "未知错误"}，改用无障碍结果"
-                        generate()
-                    } else {
-                        statusText = "识别失败：本地 OCR 识别失败：${e.message ?: "未知错误"}"
-                    }
-                }
-        } catch (e: Exception) {
-            statusText = "识别失败：裁剪冻屏图出错：${e.message ?: "未知错误"}"
+        if (accessText.length >= 5) {
+            postText = accessText.take(4000)
+            statusText = "框选识别完成"
+            generate()
+        } else {
+            statusText = "框内无障碍没读到文字：请把框调大一点、只盖正文再确认；如果还是读不到，再点面板里的截图识别（那会弹录屏许可）"
         }
     }
 
