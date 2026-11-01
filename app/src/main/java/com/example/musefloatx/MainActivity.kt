@@ -1,0 +1,142 @@
+package com.example.musefloatx
+
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.provider.Settings
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val store = SettingsStore(this)
+        setContent {
+            MaterialTheme {
+                val scope = rememberCoroutineScope()
+                var baseUrl by remember { mutableStateOf(store.baseUrl) }
+                var apiKey by remember { mutableStateOf(store.apiKey) }
+                var model by remember { mutableStateOf(store.model) }
+                var style by remember { mutableStateOf(store.style) }
+                var testResult by remember { mutableStateOf("") }
+                var tick by remember { mutableStateOf(0) }
+                @Suppress("UNUSED_VARIABLE")
+                val unusedTick = tick
+
+                val overlayOk = Settings.canDrawOverlays(this)
+                val enabledServices = Settings.Secure.getString(
+                    contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+                ) ?: ""
+                val accessibilityOk = enabledServices.contains(packageName)
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    Text("MuseFloatX", fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                    Text("只在 X 里用的悬浮回复助手：点悬浮球识别帖子、生成回复建议，你自己复制粘贴，不自动发送。", fontSize = 14.sp)
+                    Spacer(Modifier.height(16.dp))
+
+                    Text("1. 权限", fontWeight = FontWeight.Bold)
+                    Text("悬浮窗：" + if (overlayOk) "已开启" else "未开启")
+                    Text("无障碍（读 X 帖子文字）：" + if (accessibilityOk) "已开启" else "未开启")
+                    Row {
+                        Button(
+                            onClick = {
+                                startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+                            },
+                            modifier = Modifier.padding(end = 8.dp)
+                        ) { Text("开悬浮窗") }
+                        OutlinedButton(
+                            onClick = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+                        ) { Text("开无障碍") }
+                    }
+                    OutlinedButton(onClick = { tick += 1 }) { Text("刷新权限状态") }
+                    Spacer(Modifier.height(16.dp))
+
+                    Text("2. AI 服务（只需填一次）", fontWeight = FontWeight.Bold)
+                    Text("这里填你自己的 OpenAI 兼容服务地址和密钥。Muse 没有公开官方 API，所以 App 里没有“Muse 一键登录”；如果你自己部署了 muse2api，就把它的地址填在这里。不要把密钥发给任何人。", fontSize = 13.sp)
+                    OutlinedTextField(
+                        value = baseUrl, onValueChange = { baseUrl = it; store.baseUrl = it },
+                        label = { Text("服务地址，例如 http://你的服务器IP:18610") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = apiKey, onValueChange = { apiKey = it; store.apiKey = it },
+                        label = { Text("API 密钥") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = model, onValueChange = { model = it; store.model = it },
+                        label = { Text("模型，例如 muse-spark") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Row {
+                        listOf("自然", "幽默", "简短").forEach { s ->
+                            if (style == s) {
+                                Button(onClick = { style = s; store.style = s }, modifier = Modifier.padding(end = 8.dp)) { Text(s) }
+                            } else {
+                                OutlinedButton(onClick = { style = s; store.style = s }, modifier = Modifier.padding(end = 8.dp)) { Text(s) }
+                            }
+                        }
+                    }
+                    Button(onClick = {
+                        testResult = "测试中…"
+                        scope.launchSafe {
+                            val r = ApiClient.testConnection(store.baseUrl, store.apiKey, store.model)
+                            testResult = r.fold({ "测试成功：$it" }, { "测试失败：${it.message}" })
+                        }
+                    }) { Text("测试连接") }
+                    if (testResult.isNotBlank()) Text(testResult, fontSize = 13.sp)
+                    Spacer(Modifier.height(16.dp))
+
+                    Text("3. 悬浮球", fontWeight = FontWeight.Bold)
+                    Row {
+                        Button(onClick = {
+                            val intent = Intent(this@MainActivity, FloatingService::class.java).apply { action = "START" }
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
+                        }, modifier = Modifier.padding(end = 8.dp)) { Text("启动悬浮球") }
+                        OutlinedButton(onClick = {
+                            val intent = Intent(this@MainActivity, FloatingService::class.java).apply { action = "STOP" }
+                            startService(intent)
+                        }) { Text("停止") }
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    Text("使用方法：先在上面开好两个权限、填好服务地址和密钥并测试通过，再启动悬浮球；打开 X 看一条帖子，点悬浮球，面板里会显示识别到的帖子文字和 AI 回复，点复制后去 X 粘贴。截图识别只在无障碍读不到文字时用，识别在本机完成，不上传截图。", fontSize = 13.sp)
+                }
+            }
+        }
+    }
+}
+
+private fun androidx.compose.runtime.CoroutineScope.launchSafe(block: suspend () -> Unit) {
+    kotlinx.coroutines.launch { block() }
+}

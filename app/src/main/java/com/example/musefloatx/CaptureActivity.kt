@@ -1,0 +1,118 @@
+package com.example.musefloatx
+
+import android.app.Activity
+import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.PixelFormat
+import android.hardware.display.DisplayManager
+import android.hardware.display.VirtualDisplay
+import android.media.ImageReader
+import android.media.projection.MediaProjection
+import android.media.projection.MediaProjectionManager
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
+
+class CaptureActivity : Activity() {
+    private var projection: MediaProjection? = null
+    private var virtualDisplay: VirtualDisplay? = null
+    private var imageReader: ImageReader? = null
+    private var done = false
+    private val handler = Handler(Looper.getMainLooper())
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        CaptureHub.clear()
+        val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        @Suppress("DEPRECATION")
+        startActivityForResult(mgr.createScreenCaptureIntent(), 1001)
+        handler.postDelayed({ finishIfNotDone() }, 10000)
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != 1001 || resultCode != RESULT_OK || data == null) {
+            finishIfNotDone()
+            return
+        }
+        try {
+            val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            projection = mgr.getMediaProjection(resultCode, data)
+            val dm = resources.displayMetrics
+            val width = dm.widthPixels
+            val height = dm.heightPixels
+            val reader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+            imageReader = reader
+            reader.setOnImageAvailableListener({ r ->
+                try {
+                    val image = r.acquireLatestImage() ?: return@setOnImageAvailableListener
+                    val bitmap = imageToBitmap(image)
+                    image.close()
+                    if (bitmap != null) recognize(bitmap) else finishIfNotDone()
+                } catch (e: Exception) {
+                    finishIfNotDone()
+                }
+            }, handler)
+            virtualDisplay = projection?.createVirtualDisplay(
+                "MuseFloatXCapture", width, height, dm.densityDpi,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                reader.surface, null, null
+            )
+        } catch (e: Exception) {
+            finishIfNotDone()
+        }
+    }
+
+    private fun imageToBitmap(image: android.media.Image): Bitmap? {
+        return try {
+            val plane = image.planes[0]
+            val buffer = plane.buffer
+            val pixelStride = plane.pixelStride
+            val rowStride = plane.rowStride
+            val rowPadding = rowStride - pixelStride * image.width
+            val bitmap = Bitmap.createBitmap(
+                image.width + rowPadding / pixelStride, image.height, Bitmap.Config.ARGB_8888
+            )
+            bitmap.copyPixelsFromBuffer(buffer)
+            Bitmap.createBitmap(bitmap, 0, 0, image.width, image.height)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun recognize(bitmap: Bitmap) {
+        try {
+            val recognizer = TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
+            recognizer.process(InputImage.fromBitmap(bitmap, 0))
+                .addOnSuccessListener { result ->
+                    CaptureHub.post(result.text ?: "")
+                    finishIfNotDone()
+                }
+                .addOnFailureListener {
+                    CaptureHub.post("")
+                    finishIfNotDone()
+                }
+        } catch (e: Exception) {
+            finishIfNotDone()
+        }
+    }
+
+    private fun finishIfNotDone() {
+        if (done) return
+        done = true
+        try { virtualDisplay?.release() } catch (e: Exception) {}
+        try { imageReader?.close() } catch (e: Exception) {}
+        try { projection?.stop() } catch (e: Exception) {}
+        finish()
+    }
+
+    override fun onDestroy() {
+        finishIfNotDone()
+        super.onDestroy()
+    }
+}
