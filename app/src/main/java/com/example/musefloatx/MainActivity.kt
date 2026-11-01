@@ -52,10 +52,6 @@ class MainActivity : ComponentActivity() {
                 val unusedTick = tick
 
                 val overlayOk = Settings.canDrawOverlays(this)
-                val enabledServices = Settings.Secure.getString(
-                    contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-                ) ?: ""
-                val accessibilityOk = enabledServices.contains(packageName)
 
                 Column(
                     modifier = Modifier
@@ -64,13 +60,15 @@ class MainActivity : ComponentActivity() {
                         .verticalScroll(rememberScrollState())
                 ) {
                     Text("MuseFloatX", fontSize = 24.sp, fontWeight = FontWeight.Bold)
-                    Text("版本：第 25 版（短帖+提速版），装好后这里必须显示第 25 版才算新版。", fontSize = 13.sp)
-                    Text("只在 X 里用的悬浮回复助手：点悬浮球识别帖子、生成回复建议，你自己复制粘贴，不自动发送。", fontSize = 14.sp)
+                    Text("版本：第 26 版（去掉无障碍版），装好后这里必须显示第 26 版才算新版。", fontSize = 13.sp)
+                    Text("只在 X 里用的悬浮回复助手：你在 X 里复制帖子，点悬浮球，面板读剪贴板生成回复建议，你自己复制粘贴，不自动发送。不读屏、不截图、不需要无障碍。", fontSize = 14.sp)
                     Spacer(Modifier.height(16.dp))
 
                     Text("1. 权限", fontWeight = FontWeight.Bold)
                     Text("悬浮窗：" + if (overlayOk) "已开启" else "未开启")
-                    Text("无障碍（读 X 帖子文字）：" + if (accessibilityOk) "已开启" else "未开启")
+                    // 简化后不再需要无障碍：主流程是剪贴板，之前那个
+                    // “开无障碍”按钮是旧框选读屏流程留下的，已经去掉，
+                    // 无障碍服务也不再注册，系统设置里不会再列出它。
                     Row {
                         Button(
                             onClick = {
@@ -78,9 +76,6 @@ class MainActivity : ComponentActivity() {
                             },
                             modifier = Modifier.padding(end = 8.dp)
                         ) { Text("开悬浮窗") }
-                        OutlinedButton(
-                            onClick = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-                        ) { Text("开无障碍") }
                     }
                     OutlinedButton(onClick = { tick += 1 }) { Text("刷新权限状态") }
                     Spacer(Modifier.height(16.dp))
@@ -141,7 +136,7 @@ class MainActivity : ComponentActivity() {
                         }) { Text("停止") }
                     }
                     Spacer(Modifier.height(16.dp))
-                    Text("使用方法：先在上面开好两个权限、填好服务地址和密钥并测试通过，再启动悬浮球；在任意 App（X、ChatGPT、浏览器等）里打开要回的内容，点悬浮球就直接进裁剪框，调好框点确认，系统弹录屏许可时点开始，面板里会显示框选图片、识别文字和 AI 回复，点复制后去粘贴。不再做自动识别，识别是截图裁剪本地 OCR，不依赖任何 App 的页面结构，识别在本机完成，不上传截图。", fontSize = 13.sp)
+                    Text("使用方法：先在上面开好悬浮窗、填好服务地址和密钥并测试通过，再启动悬浮球；在 X 里复制要回的帖子，点悬浮球，面板直接读剪贴板生成，面板里显示原文和 AI 回复，点复制后去 X 粘贴，不自动发送。剪贴板是空的只提示、不发送；系统不让直接读剪贴板时，用面板里的手动粘贴输入框长按粘贴再生成。不需要无障碍，不截图，不 OCR。", fontSize = 13.sp)
                 }
             }
         }

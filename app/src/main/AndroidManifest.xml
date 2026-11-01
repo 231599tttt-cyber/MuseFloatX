@@ -33,17 +33,9 @@
                 android:value="floating_reply_assistant" />
         </service>
 
-        <service
-            android:name=".MuseAccessibilityService"
-            android:exported="true"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/accessibility_service_config" />
-        </service>
+        <!-- 简化后不再注册无障碍服务：主流程是剪贴板，不读屏。
+             MuseAccessibilityService 类文件仍在项目里、面板已不再调用，
+             不注册就不会被系统列出、也不会被绑定，等于停用。 -->
 
         <activity
             android:name=".CaptureActivity"
