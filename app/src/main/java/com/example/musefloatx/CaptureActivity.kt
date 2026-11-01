@@ -29,6 +29,9 @@ class CaptureActivity : Activity() {
         CaptureHub.clear()
         CaptureHub.croppedBitmap = null
         CaptureHub.lastOcrError = null
+        CaptureHub.frozenBitmap = null
+        CaptureHub.freezeCancelled = false
+        val freezeMode = intent?.getBooleanExtra("freeze", false) == true
         val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         @Suppress("DEPRECATION")
         startActivityForResult(mgr.createScreenCaptureIntent(), 1001)
@@ -47,6 +50,7 @@ class CaptureActivity : Activity() {
         if (requestCode != 1001 || resultCode != RESULT_OK || data == null) {
             // 取消录屏也要回传一个空结果 + 具体原因，否则面板会一直停在“正在截图识别”。
             CaptureHub.lastOcrError = "用户取消了录屏许可：没点开始，App 拿不到截图"
+            if (freezeMode) CaptureHub.freezeCancelled = true
             CaptureHub.post("")
             finishIfNotDone()
             return
@@ -97,6 +101,11 @@ class CaptureActivity : Activity() {
     }
 
     private fun recognize(bitmap: Bitmap) {
+        if (intent?.getBooleanExtra("freeze", false) == true) {
+            CaptureHub.frozenBitmap = bitmap
+            finishIfNotDone()
+            return
+        }
         try {
             // 框选截图：只认框内像素，不认框外评论区；框外像素裁掉，
             // 哪怕无障碍树里根本没有主帖文字，像素里也能认出来。

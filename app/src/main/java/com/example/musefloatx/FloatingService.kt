@@ -50,6 +50,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
@@ -85,6 +89,12 @@ class FloatingService : Service() {
     private var cropBox by mutableStateOf<Rect?>(null)
     private var cropScreenW by mutableStateOf(0)
     private var cropScreenH by mutableStateOf(0)
+    private var cropBottomBarH by mutableStateOf(0)
+    private var frozenShotBitmap: android.graphics.Bitmap? = null
+    private fun cropMaxBottom(): Int {
+        val limit = if (cropBottomBarH > 0) cropScreenH - cropBottomBarH - 48 else cropScreenH
+        return limit.coerceAtLeast(0)
+    }
     private var cropDragMode = "NONE"
     private var cropDragStartBox: Rect? = null
     private var cropDragStartPos = Offset.Zero
@@ -92,7 +102,9 @@ class FloatingService : Service() {
 
     private fun defaultCropBox(w: Int, h: Int): Rect {
         if (w <= 0 || h <= 0) return Rect(0, 0, 0, 0)
-        return Rect((w * 0.08f).toInt(), (h * 0.15f).toInt(), (w * 0.92f).toInt(), (h * 0.85f).toInt())
+        val maxB = cropMaxBottom()
+        val bottom = if (maxB > 0) minOf((h * 0.85f).toInt(), maxB) else (h * 0.85f).toInt()
+        return Rect((w * 0.08f).toInt(), (h * 0.15f).toInt(), (w * 0.92f).toInt(), bottom)
     }
     private var ballParams: WindowManager.LayoutParams? = null
     private var ballX = 0
@@ -249,9 +261,8 @@ class FloatingService : Service() {
             return
         }
         // 用户要求：点球直接跳框选，不做自动识别。
-        // 自动识别永远只读到评论区，所以点球不再先出面板、自动认全屏，
-        // 而是直接进框选，用户框住主帖、点确认才认、才生成。
-        showSelectionOverlay()
+        // 先冻屏截图再进裁剪框，框选时 X 页面不会动。
+        enterBoxSelectionWithFreeze()
     }
 
     private fun showPanel() {
@@ -340,7 +351,7 @@ class FloatingService : Service() {
                         }
                         Spacer(Modifier.height(8.dp))
                         Row {
-                            OutlinedButton(onClick = { showSelectionOverlay() }) { Text("框选识别") }
+                            OutlinedButton(onClick = { enterBoxSelectionWithFreeze() }) { Text("框选识别") }
                         }
                         Spacer(Modifier.height(6.dp))
                         Text("只生成建议，不会自动发送，请你自己粘贴。点一下悬浮球也能关闭面板。", fontSize = 12.sp, color = Color.Gray)
@@ -459,13 +470,42 @@ class FloatingService : Service() {
      * 松手后只读框内中心点落入的无障碍文字，不读框外评论区。
      * 框太小算取消，回到面板。
      */
-    private fun showSelectionOverlay() {
+    private fun enterBoxSelectionWithFreeze() {
         selectionReturnToPanel = (panelView != null)
         removePanel()
+        if (selectionView != null) return
+        frozenShotBitmap = null
+        val intent = Intent(this, CaptureActivity::class.java).apply {
+            putExtra("freeze", true)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        startActivity(intent)
+        scope.launch {
+            var waited = 0
+            while (waited < 15000) {
+                val bmp = CaptureHub.frozenBitmap
+                if (bmp != null) {
+                    showSelectionOverlay(bmp)
+                    return@launch
+                }
+                if (CaptureHub.freezeCancelled) break
+                delay(200)
+                waited += 200
+            }
+            Toast.makeText(this@FloatingService, "截图许可被取消或超时，改用透明框选", Toast.LENGTH_SHORT).show()
+            showSelectionOverlay(null)
+        }
+    }
+
+    private fun showSelectionOverlay(frozenBitmap: android.graphics.Bitmap? = null) {
+        selectionReturnToPanel = (panelView != null)
+        removePanel()
+        frozenShotBitmap = frozenBitmap
         if (selectionView != null) return
         cropBox = null
         cropScreenW = 0
         cropScreenH = 0
+        cropBottomBarH = 0
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -488,8 +528,8 @@ class FloatingService : Service() {
             // 相当于在冻结的一层上操作；手柄在边缘时自动往里缩一点，
             // 但框的边线仍然可以贴到屏幕最边缘。
             val density = LocalDensity.current.density
-            val handleVisual = 16f * density
-            val handleTouch = 32f * density
+            val handleVisual = 9f * density
+            val handleTouch = 24f * density
             val screenW = cropScreenW
             val screenH = cropScreenH
             val box = cropBox
@@ -504,6 +544,17 @@ class FloatingService : Service() {
                         }
                     }
             ) {
+                // 冻屏背景：进入框选前截的那张整屏图，框就画在这张图上，
+                // 不是活的 X 页面，所以拖框时 X 不会滑动、不会返回。
+                val frozen = frozenShotBitmap
+                if (frozen != null) {
+                    Image(
+                        bitmap = frozen.asImageBitmap(),
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.FillBounds
+                    )
+                }
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -564,7 +615,7 @@ class FloatingService : Service() {
                                             val dx = (currentPos.x - cropDragStartPos.x).toInt()
                                             val dy = (currentPos.y - cropDragStartPos.y).toInt()
                                             val nl = (startBox.left + dx).coerceIn(0, cropScreenW - bw)
-                                            val nt = (startBox.top + dy).coerceIn(0, cropScreenH - bh)
+                                            val nt = (startBox.top + dy).coerceIn(0, cropMaxBottom() - bh)
                                             Rect(nl, nt, nl + bw, nt + bh)
                                         }
                                         "TL" -> Rect(
@@ -582,12 +633,12 @@ class FloatingService : Service() {
                                             currentPos.x.toInt().coerceIn(0, startBox.right - minSize),
                                             startBox.top,
                                             startBox.right,
-                                            currentPos.y.toInt().coerceIn(startBox.top + minSize, cropScreenH)
+                                            currentPos.y.toInt().coerceIn(startBox.top + minSize, cropMaxBottom())
                                         )
                                         "BR" -> Rect(
                                             startBox.left, startBox.top,
                                             currentPos.x.toInt().coerceIn(startBox.left + minSize, cropScreenW),
-                                            currentPos.y.toInt().coerceIn(startBox.top + minSize, cropScreenH)
+                                            currentPos.y.toInt().coerceIn(startBox.top + minSize, cropMaxBottom())
                                         )
                                         "L" -> Rect(
                                             currentPos.x.toInt().coerceIn(0, startBox.right - minSize),
@@ -605,7 +656,7 @@ class FloatingService : Service() {
                                         )
                                         "B" -> Rect(
                                             startBox.left, startBox.top, startBox.right,
-                                            currentPos.y.toInt().coerceIn(startBox.top + minSize, cropScreenH)
+                                            currentPos.y.toInt().coerceIn(startBox.top + minSize, cropMaxBottom())
                                         )
                                         else -> startBox
                                     }
@@ -652,12 +703,13 @@ class FloatingService : Service() {
                     modifier = Modifier
                         .fillMaxWidth()
                         .align(Alignment.BottomCenter)
+                        .onSizeChanged { cropBottomBarH = it.height }
                         .background(Color.Black.copy(alpha = 0.85f))
                         .padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     OutlinedButton(
-                        onClick = { if (cropScreenW > 0 && cropScreenH > 0) cropBox = Rect(0, 0, cropScreenW, cropScreenH) },
+                        onClick = { if (cropScreenW > 0 && cropMaxBottom() > 0) cropBox = Rect(0, 0, cropScreenW, cropMaxBottom()) },
                         modifier = Modifier.weight(1f).padding(end = 4.dp)
                     ) { Text("全屏") }
                     OutlinedButton(
@@ -706,22 +758,69 @@ class FloatingService : Service() {
     }
 
     private fun finishSelection(rect: Rect) {
-        // 先认无障碍、后撤框选层：框选层是不抢焦点的，认的时候前台窗口还是 X；
-        // 以前是先撤层再认，撤层瞬间前台窗口可能还没切回 X，认出来就是空的。
-        // 但无障碍结果不能直接信：框住主帖还认到评论区，说明无障碍节点
-        // 位置和肉眼看到的位置对不上，或者框边擦到的评论也被算进来。
-        // 所以框选一律先走框内像素 OCR：你框住什么像素，认的就是什么，
-        // 评论区不在框内像素里，就进不来；无障碍结果只留作 OCR 失败时的兜底。
-        // 注意：这一步会弹系统录屏许可，点“开始”才认得出来，点取消就
-        // 自动改用无障碍结果。
+        // 框选确认：如果进入框选时已经冻过屏，直接认冻屏裁剪图，
+        // 不用再弹一次录屏许可；冻屏图就是用户在框选层看到的那张图，
+        // 框住什么像素，认的就是什么，X 页面动不了，也进不来评论区。
+        // 没有冻屏图时（用户取消了冻屏许可，走透明框选），才走老路：
+        // 再弹一次录屏做裁剪 OCR，失败再用无障碍兜底。
         val accessText = MuseAccessibilityService.instance?.captureRegion(rect) ?: ""
         boxFallbackText = accessText
         boxImageBitmap = null
+        val frozen = frozenShotBitmap
         removeSelection()
         postText = ""
         showPanel()
+        if (frozen != null) {
+            ocrFrozenBitmap(frozen, rect, accessText)
+            return
+        }
         statusText = "正在截图识别框内文字（本地识别，不上传），请点开始…"
         ocrFlow(cropRect = rect)
+    }
+
+    private fun ocrFrozenBitmap(src: android.graphics.Bitmap, rect: Rect, accessText: String) {
+        try {
+            val left = rect.left.coerceIn(0, src.width - 1)
+            val top = rect.top.coerceIn(0, src.height - 1)
+            val w = minOf(rect.width(), src.width - left)
+            val h = minOf(rect.height(), src.height - top)
+            if (w <= 0 || h <= 0) {
+                statusText = "框选区域无效：框太小或超出屏幕，请重新调框"
+                return
+            }
+            val cropped = android.graphics.Bitmap.createBitmap(src, left, top, w, h)
+            boxImageBitmap = cropped
+            statusText = "正在识别冻屏裁剪图（本地识别，不上传）…"
+            val recognizer = TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
+            recognizer.process(InputImage.fromBitmap(cropped, 0))
+                .addOnSuccessListener { result ->
+                    val ocr = result.text?.trim() ?: ""
+                    if (ocr.isBlank()) {
+                        if (accessText.length >= 5) {
+                            postText = accessText
+                            statusText = "冻屏图没认出文字，改用无障碍结果"
+                            generate()
+                        } else {
+                            statusText = "框内截图没有认出文字：框内可能没有文字，或文字太小、太模糊，请把框调大一点、只盖文字"
+                        }
+                    } else {
+                        postText = ocr.take(4000)
+                        statusText = "框选识别完成"
+                        generate()
+                    }
+                }
+                .addOnFailureListener { e ->
+                    if (accessText.length >= 5) {
+                        postText = accessText
+                        statusText = "识别失败：本地 OCR 识别失败：${e.message ?: "未知错误"}，改用无障碍结果"
+                        generate()
+                    } else {
+                        statusText = "识别失败：本地 OCR 识别失败：${e.message ?: "未知错误"}"
+                    }
+                }
+        } catch (e: Exception) {
+            statusText = "识别失败：裁剪冻屏图出错：${e.message ?: "未知错误"}"
+        }
     }
 
     private fun removeSelection() {
@@ -730,6 +829,8 @@ class FloatingService : Service() {
         cropBox = null
         cropScreenW = 0
         cropScreenH = 0
+        cropBottomBarH = 0
+        frozenShotBitmap = null
     }
 
     private fun removeViews() {
