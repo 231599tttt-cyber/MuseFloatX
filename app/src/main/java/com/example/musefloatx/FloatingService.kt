@@ -19,7 +19,6 @@ import android.view.WindowManager
 import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.input.pointer.awaitPointerEventScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.geometry.Offset
@@ -52,6 +51,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.onSizeChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -78,20 +79,14 @@ class FloatingService : Service() {
     private var ballView: ComposeView? = null
     private var panelView: ComposeView? = null
     private var selectionView: ComposeView? = null
-    private var selectionStart by mutableStateOf(Offset.Zero)
-    private var selectionCurrent by mutableStateOf(Offset.Zero)
-    private var selecting by mutableStateOf(false)
-    private var selectionBox by mutableStateOf<Rect?>(null)
-    private var tapStart by mutableStateOf<Offset?>(null)
+    private var cropBox by mutableStateOf<Rect?>(null)
+    private var cropScreenW by mutableStateOf(0)
+    private var cropScreenH by mutableStateOf(0)
     private var selectionReturnToPanel = false
 
-    private fun unionRect(a: Rect, b: Rect): Rect {
-        return Rect(
-            minOf(a.left, b.left),
-            minOf(a.top, b.top),
-            maxOf(a.right, b.right),
-            maxOf(a.bottom, b.bottom)
-        )
+    private fun defaultCropBox(w: Int, h: Int): Rect {
+        if (w <= 0 || h <= 0) return Rect(0, 0, 0, 0)
+        return Rect((w * 0.08f).toInt(), (h * 0.15f).toInt(), (w * 0.92f).toInt(), (h * 0.85f).toInt())
     }
     private var ballParams: WindowManager.LayoutParams? = null
     private var ballX = 0
@@ -426,11 +421,9 @@ class FloatingService : Service() {
         selectionReturnToPanel = (panelView != null)
         removePanel()
         if (selectionView != null) return
-        selecting = false
-        selectionStart = Offset.Zero
-        selectionCurrent = Offset.Zero
-        selectionBox = null
-        tapStart = null
+        cropBox = null
+        cropScreenW = 0
+        cropScreenH = 0
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -445,17 +438,30 @@ class FloatingService : Service() {
         val view = ComposeView(this)
         attachOwners(view)
         view.setContent {
-            // 框选 v3：解决三个问题。
-            // 1. 边缘返回：框选层左右各 120px 设为系统手势排除区，
-            //    从左/右边缘开始拖不再触发系统返回手势。
-            // 2. 点按定角：不用拖也能框，点一下定一个角、再点一下定另一个角，
-            //    点按本身不触发返回手势，左上角点不到的问题就没了，
-            //    框也不用贴到屏幕边，只要盖住帖子文字就行。
-            // 3. 可继续扩框：松手后框留住，再拖一次是把新框和旧框并起来，
-            //    不是重开；换个方位接着拉，直到满意点确认识别。
-            //    只有点“重新框选”才会清掉旧框重来。
-            // 手势只用最基础的 pressed/previousPressed/position 字段，避免旧版手势 API 失效。
-            Box(modifier = Modifier.fillMaxSize()) {
+            // 裁剪式框选：像手机相册裁图一样用。
+            // 进入就先给一个大框，不用从头画；8 个大手柄随便拖改大小，
+            // 按住框里随便拖就是整体移动；松手框留住，不自动退出；
+            // 只有点底部“确认”才结束并识别，点“全屏”“重置”“取消”各有各的用。
+            // 框选层吃掉全部手势，X 页面在框选时不会滑动、不会返回，
+            // 相当于在冻结的一层上操作；手柄在边缘时自动往里缩一点，
+            // 但框的边线仍然可以贴到屏幕最边缘。
+            val density = LocalDensity.current.density
+            val handleVisual = 28f * density
+            val handleTouch = 48f * density
+            val screenW = cropScreenW
+            val screenH = cropScreenH
+            val box = cropBox
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .onSizeChanged { size ->
+                        cropScreenW = size.width
+                        cropScreenH = size.height
+                        if (cropBox == null && size.width > 0 && size.height > 0) {
+                            cropBox = defaultCropBox(size.width, size.height)
+                        }
+                    }
+            ) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -470,110 +476,146 @@ class FloatingService : Service() {
                                         if (change != null) {
                                             downId = change.id
                                             downPos = change.position
+                                            change.consume()
                                         }
                                     }
+                                    val startBox = cropBox
                                     val startPos = downPos
+                                    var mode = "NONE"
+                                    if (startBox != null && screenW > 0 && screenH > 0) {
+                                        // 先找手柄：用手柄视觉位置（边缘内缩后）算距离，取最近的一个。
+                                        val handles = listOf(
+                                            "TL" to Offset(startBox.left.toFloat(), startBox.top.toFloat()),
+                                            "TR" to Offset(startBox.right.toFloat(), startBox.top.toFloat()),
+                                            "BL" to Offset(startBox.left.toFloat(), startBox.bottom.toFloat()),
+                                            "BR" to Offset(startBox.right.toFloat(), startBox.bottom.toFloat()),
+                                            "L" to Offset(startBox.left.toFloat(), (startBox.top + startBox.bottom) / 2f),
+                                            "R" to Offset(startBox.right.toFloat(), (startBox.top + startBox.bottom) / 2f),
+                                            "T" to Offset((startBox.left + startBox.right) / 2f, startBox.top.toFloat()),
+                                            "B" to Offset((startBox.left + startBox.right) / 2f, startBox.bottom.toFloat())
+                                        )
+                                        var best: String? = null
+                                        var bestDist = Float.MAX_VALUE
+                                        for ((name, raw) in handles) {
+                                            val vx = raw.x.coerceIn(handleVisual, screenW - handleVisual)
+                                            val vy = raw.y.coerceIn(handleVisual, screenH - handleVisual)
+                                            val d = (startPos - Offset(vx, vy)).getDistance()
+                                            if (d <= handleTouch && d < bestDist) {
+                                                best = name
+                                                bestDist = d
+                                            }
+                                        }
+                                        mode = when {
+                                            best != null -> best
+                                            startBox.contains(startPos.x.toInt(), startPos.y.toInt()) -> "MOVE"
+                                            else -> "NONE"
+                                        }
+                                    }
                                     var currentPos = startPos
-                                    var isDrag = false
                                     var up = false
                                     while (!up) {
                                         val event = awaitPointerEvent()
                                         val change = event.changes.firstOrNull { it.id == downId }
                                         if (change == null) continue
                                         if (!change.pressed) {
+                                            change.consume()
                                             up = true
                                             break
                                         }
-                                        if (change.position != currentPos) {
-                                            if ((change.position - startPos).getDistance() > viewConfiguration.touchSlop) {
-                                                isDrag = true
-                                                selecting = true
-                                                selectionStart = startPos
-                                                selectionCurrent = change.position
-                                                currentPos = change.position
-                                                change.consume()
+                                        change.consume()
+                                        currentPos = change.position
+                                        if (mode == "NONE" || startBox == null) continue
+                                        val bw = startBox.width()
+                                        val bh = startBox.height()
+                                        val minSize = 80
+                                        val newBox = when (mode) {
+                                            "MOVE" -> {
+                                                val dx = (currentPos.x - startPos.x).toInt()
+                                                val dy = (currentPos.y - startPos.y).toInt()
+                                                val nl = (startBox.left + dx).coerceIn(0, screenW - bw)
+                                                val nt = (startBox.top + dy).coerceIn(0, screenH - bh)
+                                                Rect(nl, nt, nl + bw, nt + bh)
                                             }
-                                        }
-                                    }
-                                    selecting = false
-                                    if (isDrag) {
-                                        tapStart = null
-                                        val dragRect = Rect(
-                                            minOf(startPos.x, currentPos.x).toInt(),
-                                            minOf(startPos.y, currentPos.y).toInt(),
-                                            maxOf(startPos.x, currentPos.x).toInt(),
-                                            maxOf(startPos.y, currentPos.y).toInt()
-                                        )
-                                        val old = selectionBox
-                                        if (old == null) {
-                                            if (dragRect.width() < 80 || dragRect.height() < 80) {
-                                                Toast.makeText(this@FloatingService, "框太小，请重新框选", Toast.LENGTH_SHORT).show()
-                                            } else {
-                                                selectionBox = dragRect
-                                            }
-                                        } else {
-                                            // 继续扩框：新框和旧框并起来，不重开。
-                                            selectionBox = unionRect(old, dragRect)
-                                        }
-                                    } else {
-                                        // 点按定角：第一次点定一个角，第二次点成框。
-                                        val first = tapStart
-                                        if (first == null) {
-                                            tapStart = startPos
-                                            Toast.makeText(this@FloatingService, "已定一个角，再点一下定另一个角", Toast.LENGTH_SHORT).show()
-                                        } else {
-                                            tapStart = null
-                                            val tapRect = Rect(
-                                                minOf(first.x, startPos.x).toInt(),
-                                                minOf(first.y, startPos.y).toInt(),
-                                                maxOf(first.x, startPos.x).toInt(),
-                                                maxOf(first.y, startPos.y).toInt()
+                                            "TL" -> Rect(
+                                                currentPos.x.toInt().coerceIn(0, startBox.right - minSize),
+                                                currentPos.y.toInt().coerceIn(0, startBox.bottom - minSize),
+                                                startBox.right, startBox.bottom
                                             )
-                                            val old = selectionBox
-                                            if (old == null) {
-                                                if (tapRect.width() < 80 || tapRect.height() < 80) {
-                                                    Toast.makeText(this@FloatingService, "两个点太近，请重新点", Toast.LENGTH_SHORT).show()
-                                                } else {
-                                                    selectionBox = tapRect
-                                                }
-                                            } else {
-                                                selectionBox = unionRect(old, tapRect)
-                                            }
+                                            "TR" -> Rect(
+                                                startBox.left,
+                                                currentPos.y.toInt().coerceIn(0, startBox.bottom - minSize),
+                                                currentPos.x.toInt().coerceIn(startBox.left + minSize, screenW),
+                                                startBox.bottom
+                                            )
+                                            "BL" -> Rect(
+                                                currentPos.x.toInt().coerceIn(0, startBox.right - minSize),
+                                                startBox.top,
+                                                startBox.right,
+                                                currentPos.y.toInt().coerceIn(startBox.top + minSize, screenH)
+                                            )
+                                            "BR" -> Rect(
+                                                startBox.left, startBox.top,
+                                                currentPos.x.toInt().coerceIn(startBox.left + minSize, screenW),
+                                                currentPos.y.toInt().coerceIn(startBox.top + minSize, screenH)
+                                            )
+                                            "L" -> Rect(
+                                                currentPos.x.toInt().coerceIn(0, startBox.right - minSize),
+                                                startBox.top, startBox.right, startBox.bottom
+                                            )
+                                            "R" -> Rect(
+                                                startBox.left, startBox.top,
+                                                currentPos.x.toInt().coerceIn(startBox.left + minSize, screenW),
+                                                startBox.bottom
+                                            )
+                                            "T" -> Rect(
+                                                startBox.left,
+                                                currentPos.y.toInt().coerceIn(0, startBox.bottom - minSize),
+                                                startBox.right, startBox.bottom
+                                            )
+                                            "B" -> Rect(
+                                                startBox.left, startBox.top, startBox.right,
+                                                currentPos.y.toInt().coerceIn(startBox.top + minSize, screenH)
+                                            )
+                                            else -> startBox
                                         }
+                                        cropBox = newBox
                                     }
+                                    // 松手框留住，不退出、不重固定起点，等用户点确认。
                                 }
                             }
                         }
                 ) {
                     Canvas(modifier = Modifier.fillMaxSize()) {
-                        val box: Rect? = if (selecting) {
-                            Rect(
-                                minOf(selectionStart.x, selectionCurrent.x).toInt(),
-                                minOf(selectionStart.y, selectionCurrent.y).toInt(),
-                                maxOf(selectionStart.x, selectionCurrent.x).toInt(),
-                                maxOf(selectionStart.y, selectionCurrent.y).toInt()
-                            )
-                        } else selectionBox
-                        if (box != null) {
-                            drawRect(
-                                color = Color(0xFF7C4DFF).copy(alpha = 0.15f),
-                                topLeft = Offset(box.left.toFloat(), box.top.toFloat()),
-                                size = Size((box.right - box.left).toFloat(), (box.bottom - box.top).toFloat())
-                            )
-                            drawRect(
-                                color = Color(0xFF7C4DFF),
-                                topLeft = Offset(box.left.toFloat(), box.top.toFloat()),
-                                size = Size((box.right - box.left).toFloat(), (box.bottom - box.top).toFloat()),
-                                style = Stroke(width = 6f)
-                            )
-                        }
-                        val tap = tapStart
-                        if (tap != null) {
-                            drawCircle(
-                                color = Color(0xFF7C4DFF),
-                                radius = 24f,
-                                center = tap
-                            )
+                        val b = box ?: return@Canvas
+                        // 框外变暗，框里保持原样，裁图感就出来了。
+                        val dim = Color.Black.copy(alpha = 0.5f)
+                        drawRect(dim, Offset(0f, 0f), Size(size.width, b.top.toFloat()))
+                        drawRect(dim, Offset(0f, b.bottom.toFloat()), Size(size.width, size.height - b.bottom))
+                        drawRect(dim, Offset(0f, b.top.toFloat()), Size(b.left.toFloat(), (b.bottom - b.top).toFloat()))
+                        drawRect(dim, Offset(b.right.toFloat(), b.top.toFloat()), Size(size.width - b.right, (b.bottom - b.top).toFloat()))
+                        drawRect(
+                            color = Color(0xFF7C4DFF),
+                            topLeft = Offset(b.left.toFloat(), b.top.toFloat()),
+                            size = Size((b.right - b.left).toFloat(), (b.bottom - b.top).toFloat()),
+                            style = Stroke(width = 6f)
+                        )
+                        // 8 个手柄：四个角 + 四条边中间，手柄大，边缘处自动往里缩，
+                        // 但框的边线仍然可以贴到屏幕最边缘。
+                        val raws = listOf(
+                            Offset(b.left.toFloat(), b.top.toFloat()),
+                            Offset(b.right.toFloat(), b.top.toFloat()),
+                            Offset(b.left.toFloat(), b.bottom.toFloat()),
+                            Offset(b.right.toFloat(), b.bottom.toFloat()),
+                            Offset(b.left.toFloat(), (b.top + b.bottom) / 2f),
+                            Offset(b.right.toFloat(), (b.top + b.bottom) / 2f),
+                            Offset((b.left + b.right) / 2f, b.top.toFloat()),
+                            Offset((b.left + b.right) / 2f, b.bottom.toFloat())
+                        )
+                        for (raw in raws) {
+                            val vx = raw.x.coerceIn(handleVisual, size.width - handleVisual)
+                            val vy = raw.y.coerceIn(handleVisual, size.height - handleVisual)
+                            drawCircle(Color.White, radius = handleVisual, center = Offset(vx, vy))
+                            drawCircle(Color(0xFF7C4DFF), radius = handleVisual, center = Offset(vx, vy), style = Stroke(width = 4f))
                         }
                     }
                 }
@@ -581,37 +623,33 @@ class FloatingService : Service() {
                     modifier = Modifier
                         .fillMaxWidth()
                         .align(Alignment.BottomCenter)
-                        .background(Color.Black.copy(alpha = 0.7f))
+                        .background(Color.Black.copy(alpha = 0.85f))
                         .padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (selectionBox == null) {
-                        Text(
-                            "点一下定角、再点一下成框，或直接拖动；松手后框留住，可继续拖扩大，满意点确认识别",
-                            color = Color.White,
-                            fontSize = 14.sp,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Button(onClick = { cancelSelection() }) { Text("取消") }
-                    } else {
-                        Button(
-                            onClick = { selectionBox?.let { finishSelection(it) } },
-                            modifier = Modifier.padding(end = 8.dp)
-                        ) { Text("确认识别") }
-                        OutlinedButton(
-                            onClick = { selectionBox = null; tapStart = null },
-                            modifier = Modifier.padding(end = 8.dp)
-                        ) { Text("重新框选") }
-                        OutlinedButton(onClick = { cancelSelection() }) { Text("取消") }
-                    }
+                    OutlinedButton(
+                        onClick = { if (screenW > 0 && screenH > 0) cropBox = Rect(0, 0, screenW, screenH) },
+                        modifier = Modifier.weight(1f).padding(end = 4.dp)
+                    ) { Text("全屏") }
+                    OutlinedButton(
+                        onClick = { if (screenW > 0 && screenH > 0) cropBox = defaultCropBox(screenW, screenH) },
+                        modifier = Modifier.weight(1f).padding(end = 4.dp)
+                    ) { Text("重置") }
+                    OutlinedButton(
+                        onClick = { cancelSelection() },
+                        modifier = Modifier.weight(1f).padding(end = 4.dp)
+                    ) { Text("取消") }
+                    Button(
+                        onClick = { cropBox?.let { finishSelection(it) } },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("确认") }
                 }
             }
         }
         selectionView = view
         try {
             wm.addView(view, params)
-            // 边缘返回排除：左右边缘各 120px 不再触发系统返回手势，
-            // 从左上角开始框也不会被系统抢走。
+            // 边缘返回排除：左右边缘各 120px 不再触发系统返回手势。
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 view.post {
                     try {
@@ -672,9 +710,9 @@ class FloatingService : Service() {
     private fun removeSelection() {
         try { selectionView?.let { wm.removeView(it) } } catch (e: Exception) {}
         selectionView = null
-        selecting = false
-        selectionBox = null
-        tapStart = null
+        cropBox = null
+        cropScreenW = 0
+        cropScreenH = 0
     }
 
     private fun removeViews() {
