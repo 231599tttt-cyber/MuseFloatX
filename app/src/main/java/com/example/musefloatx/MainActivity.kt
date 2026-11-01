@@ -64,7 +64,7 @@ class MainActivity : ComponentActivity() {
                         .verticalScroll(rememberScrollState())
                 ) {
                     Text("MuseFloatX", fontSize = 24.sp, fontWeight = FontWeight.Bold)
-                    Text("版本：第 10 版（框选改进版），装好后这里必须显示第 10 版才算新版。", fontSize = 13.sp)
+                    Text("版本：第 11 版（点球直达框选版），装好后这里必须显示第 11 版才算新版。", fontSize = 13.sp)
                     Text("只在 X 里用的悬浮回复助手：点悬浮球识别帖子、生成回复建议，你自己复制粘贴，不自动发送。", fontSize = 14.sp)
                     Spacer(Modifier.height(16.dp))
 
@@ -141,7 +141,7 @@ class MainActivity : ComponentActivity() {
                         }) { Text("停止") }
                     }
                     Spacer(Modifier.height(16.dp))
-                    Text("使用方法：先在上面开好两个权限、填好服务地址和密钥并测试通过，再启动悬浮球；打开 X 看一条帖子，点悬浮球，面板里会显示识别到的帖子文字和 AI 回复，点复制后去 X 粘贴。截图识别只在无障碍读不到文字时用，识别在本机完成，不上传截图。", fontSize = 13.sp)
+                    Text("使用方法：先在上面开好两个权限、填好服务地址和密钥并测试通过，再启动悬浮球；打开 X 看一条帖子，点悬浮球就直接进框选，拖框框住帖子文字，点确认识别，面板里会显示框选的帖子文字和 AI 回复，点复制后去 X 粘贴。不再做自动识别，截图识别只在图片帖子读不到文字时用，识别在本机完成，不上传截图。", fontSize = 13.sp)
                 }
             }
         }

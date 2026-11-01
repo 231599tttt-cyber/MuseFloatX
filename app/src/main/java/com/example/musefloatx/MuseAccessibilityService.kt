@@ -20,10 +20,9 @@ class MuseAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event == null) return
-        val pkg = event.packageName?.toString() ?: return
-        if (pkg != X_PACKAGE) return
-        captureNow()
+        // 用户要求不做自动识别：以前每次 X 内容变化都自动全屏抓取，
+        // 结果永远只读到评论区，所以这里不再自动抓取。
+        // 识别只走手动框选：框选时直接调 captureRegion 读框内文字。
     }
 
     override fun onInterrupt() {}

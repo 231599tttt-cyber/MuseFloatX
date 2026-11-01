@@ -81,6 +81,7 @@ class FloatingService : Service() {
     private var selectionCurrent by mutableStateOf(Offset.Zero)
     private var selecting by mutableStateOf(false)
     private var selectionBox by mutableStateOf<Rect?>(null)
+    private var selectionReturnToPanel = false
     private var ballParams: WindowManager.LayoutParams? = null
     private var ballX = 0
     private var ballY = 0
@@ -234,13 +235,10 @@ class FloatingService : Service() {
             removePanel()
             return
         }
-        try {
-            showPanel()
-        } catch (e: Exception) {
-            Toast.makeText(this, "面板打开失败：${e.message}", Toast.LENGTH_SHORT).show()
-            return
-        }
-        refreshPostAndGenerate()
+        // 用户要求：点球直接跳框选，不做自动识别。
+        // 自动识别永远只读到评论区，所以点球不再先出面板、自动认全屏，
+        // 而是直接进框选，用户框住主帖、点确认才认、才生成。
+        showSelectionOverlay()
     }
 
     private fun showPanel() {
@@ -309,12 +307,13 @@ class FloatingService : Service() {
                         Spacer(Modifier.height(12.dp))
                         Row {
                             Button(onClick = { copyReply() }, modifier = Modifier.padding(end = 8.dp)) { Text("复制") }
-                            OutlinedButton(onClick = { refreshPostAndGenerate() }, modifier = Modifier.padding(end = 8.dp)) { Text("重新生成") }
+                            // 重新生成只对当前框选文字再生成一次，不再自动重认全屏，
+                            // 否则框选的主帖会被自动识别的评论区覆盖掉。
+                            OutlinedButton(onClick = { generate() }, modifier = Modifier.padding(end = 8.dp)) { Text("重新生成") }
                             OutlinedButton(onClick = { ocrFlow() }) { Text("截图识别") }
                         }
                         Spacer(Modifier.height(8.dp))
                         Row {
-                            OutlinedButton(onClick = { refreshPostOnly() }, modifier = Modifier.padding(end = 8.dp)) { Text("重新识别") }
                             OutlinedButton(onClick = { showSelectionOverlay() }) { Text("框选识别") }
                         }
                         Spacer(Modifier.height(6.dp))
@@ -331,26 +330,6 @@ class FloatingService : Service() {
         styleState = s
         store.style = s
         if (postText.length >= 5) generate()
-    }
-
-    private fun refreshPostOnly() {
-        MuseAccessibilityService.instance?.captureNow(force = true)
-        val t = ScreenSnapshotHub.freshText()
-        if (!t.isNullOrBlank()) {
-            postText = t
-            statusText = "已识别到帖子文字"
-        } else {
-            statusText = "没有读到帖子文字，请在 X 里打开一条帖子，或点截图识别"
-        }
-        // 重新识别以前只改面板里一行小字，帖子没变时看起来就像没反应，
-        // 现在弹一句提示，让点按一定有反馈。
-        Toast.makeText(this, statusText, Toast.LENGTH_SHORT).show()
-    }
-
-    private fun refreshPostAndGenerate() {
-        refreshPostOnly()
-        if (postText.length >= 5) generate()
-        else statusText = "没有读到帖子文字，请在 X 里打开一条帖子，或点截图识别"
     }
 
     private fun generate() {
@@ -432,6 +411,7 @@ class FloatingService : Service() {
      * 框太小算取消，回到面板。
      */
     private fun showSelectionOverlay() {
+        selectionReturnToPanel = (panelView != null)
         removePanel()
         if (selectionView != null) return
         selecting = false
@@ -555,8 +535,11 @@ class FloatingService : Service() {
 
     private fun cancelSelection() {
         removeSelection()
-        statusText = "已取消框选"
-        showPanel()
+        // 从面板里进框选、取消了就回面板；从球直接进框选、取消了就直接关，不出面板。
+        if (selectionReturnToPanel) {
+            statusText = "已取消框选"
+            showPanel()
+        }
     }
 
     private fun finishSelection(rect: Rect) {
