@@ -285,10 +285,12 @@ class FloatingService : Service() {
         // 不截图、不 OCR。先读一次剪贴板（这是用户点球这个动作
         // 触发的，不是后台持续监听），读到就直接生成，读不到就
         // 只提示、不发无效请求，留手动粘贴输入框作备用。
-        // 先读再出面板：面板打开时帖子已经填好了，正常情况下
-        // 手动粘贴区从一开始就不显示，不会先闪一下再消失。
-        readClipboardAndGenerate()
+        // 恢复之前那版（第 25 版）的顺序：先出面板，再读剪贴板。
+        // 第 30 版改成先读再出面板后，自动读不到、面板直接空白、
+        // 点什么都没反应——先读的顺序在真机上不如先出面板稳，
+        // 先出面板时面板已经在前台，读剪贴板那一下才跟之前一样能读到。
         showPanel()
+        readClipboardAndGenerate()
     }
 
     /**
@@ -299,9 +301,11 @@ class FloatingService : Service() {
      * 绝不后台持续监听剪贴板。
      */
     private fun readClipboardAndGenerate() {
-        // 生成中不读、不改、不提交：点球自动生成已经提交过一次了，
-        // 再读一次剪贴板、再提交一次就是第二通，只会排队变慢。
-        if (isGenerating) return
+        // 点球是新的一次面板，必须每次都重新读剪贴板。
+        // 第 30 版在这里加了“生成中直接返回”，一旦上一次的生成标志
+        // 没清掉，点球就直接静默返回、面板空白、点什么都没反应。
+        // 这个 guard 已删掉：点球本身就是新提交，重复提交的防线
+        // 在 generate() 的单飞行里，不在这里。
         try {
             val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             val clip = cm.primaryClip
@@ -475,6 +479,10 @@ class FloatingService : Service() {
         //    旧的不会继续跑完），再用新风格提交一次，同一原文。
         //    这是替换，不是叠加：任何时刻服务端只跑一个。
         if (isGenerating && s == styleState) return
+        if (postText.isBlank()) {
+            statusText = "先在 X 里复制帖子，再点悬浮球；或在下面手动粘贴框长按粘贴，再点生成"
+            return
+        }
         if (isGenerating) {
             generateJob?.cancel()
             ApiClient.cancelActive()
@@ -486,7 +494,10 @@ class FloatingService : Service() {
     }
     private fun generate() {
         val text = postText
-        if (text.isBlank()) return
+        if (text.isBlank()) {
+            statusText = "先在 X 里复制帖子，再点悬浮球；或在下面手动粘贴框长按粘贴，再点生成"
+            return
+        }
         // 根本逻辑：提交一次、生成一次、传输一次。
         // 生成中，任何新的生成入口都直接返回，不提交、不取消重发、
         // 不用序号遮掩。取消重发表面上只显示一次，实际上旧请求
