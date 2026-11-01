@@ -20,6 +20,7 @@ import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.geometry.Offset
@@ -371,13 +372,25 @@ class FloatingService : Service() {
                     ) {
                         Text("当前帖子", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                         Spacer(Modifier.height(6.dp))
-                        // 只显示前 300 字预览，全文仍用于生成，面板不再被长帖子撑得滑不动。
-                        Text(
-                            if (postText.isBlank()) "（暂无识别结果，看下面 AI 回复那行原因）"
-                            else if (postText.length > 300) postText.take(300) + "…（全文已用于生成）"
-                            else postText,
-                            fontSize = 13.sp
-                        )
+                        // 帖子放进框框里：带边框、浅紫底、圆角、内边距，看起来整洁，
+                        // 不再是一行裸文字贴在面板上。
+                        // 框里最多显示 300 字预览，超过 300 字的帖子显示前 300 字
+                        // 加省略号，全文仍用于生成；生成时原文最多取前 2000 字。
+                        // 面板整体最高 420dp、可上下滑，所以长帖子不会把面板撑出屏幕。
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(1.dp, Color(0xFFB39DDB), RoundedCornerShape(12.dp))
+                                .background(Color(0xFFF5F3FF), RoundedCornerShape(12.dp))
+                                .padding(12.dp)
+                        ) {
+                            Text(
+                                if (postText.isBlank()) "（暂无帖子内容：先在 X 里复制帖子，再点悬浮球）"
+                                else if (postText.length > 300) postText.take(300) + "…（全文已用于生成）"
+                                else postText,
+                                fontSize = 13.sp
+                            )
+                        }
                         // 通用框选证据：显示实际裁剪图，用户能一眼看到框住的是不是要认的内容，
                         // 是 X 帖子、ChatGPT 聊天还是浏览器文章，而不是只信一行文字结果。
                         val cropImg = boxImageBitmap
