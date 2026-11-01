@@ -31,6 +31,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -137,6 +139,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private fun androidx.compose.runtime.CoroutineScope.launchSafe(block: suspend () -> Unit) {
-    kotlinx.coroutines.launch { block() }
+private fun CoroutineScope.launchSafe(block: suspend () -> Unit) {
+    launch { block() }
 }
