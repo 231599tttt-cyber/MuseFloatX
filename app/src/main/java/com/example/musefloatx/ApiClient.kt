@@ -57,9 +57,9 @@ object ApiClient {
         try {
             if (baseUrl.isBlank()) return@withContext Result.failure(Exception("请先在设置里填写 AI 服务地址"))
             if (apiKey.isBlank()) return@withContext Result.failure(Exception("请先在设置里填写 API 密钥"))
-            // 前缀已按用户要求缩到一句：你是一个回复助手，根据内容，风格回复，尽量简洁，十几二十个字。
+            // 前缀已按用户要求缩到一句：你是一个回复助手，根据内容，风格回复，用最短的字数。
             // 服务端会忽略 max_tokens，字数仍靠这句短提示词控制。
-            val system = "你是一个回复助手。根据这个内容，" + styleInstruction(style) + "回复，尽量简洁，十几二十个字。"
+            val system = "你是一个回复助手。根据这个内容，" + styleInstruction(style) + "回复，用最短的字数。"
             val user = "X 帖子：\n" + postText.take(2000) + "\n回一条，别自动发送。"
             val body = JSONObject().apply {
                 put("model", model)
@@ -129,9 +129,9 @@ object ApiClient {
         try {
             if (baseUrl.isBlank()) return@withContext Result.failure(Exception("请先在设置里填写 AI 服务地址"))
             if (apiKey.isBlank()) return@withContext Result.failure(Exception("请先在设置里填写 API 密钥"))
-            // 前缀已按用户要求缩到一句：你是一个回复助手，根据内容，风格回复，尽量简洁，十几二十个字。
+            // 前缀已按用户要求缩到一句：你是一个回复助手，根据内容，风格回复，用最短的字数。
             // 服务端会忽略 max_tokens，字数仍靠这句短提示词控制。
-            val system = "你是一个回复助手。根据这个内容，" + styleInstruction(style) + "回复，尽量简洁，十几二十个字。"
+            val system = "你是一个回复助手。根据这个内容，" + styleInstruction(style) + "回复，用最短的字数。"
             val user = "X 帖子：\n" + postText.take(2000) + "\n回一条，别自动发送。"
             val body = JSONObject().apply {
                 put("model", model)
