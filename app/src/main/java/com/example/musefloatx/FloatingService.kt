@@ -61,6 +61,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -340,9 +341,20 @@ class FloatingService : Service() {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         startActivity(intent)
+        // 超时保护：20 秒还没结果就提示原因，不再一直转。
+        // 之前取消录屏、没点开始时 App 收不到任何结果，就会卡在这里。
+        scope.launch {
+            delay(20000)
+            if (statusText.startsWith("正在截图识别")) {
+                statusText = "截图识别超时：请确认刚才是否点了允许录屏，没点就重新点截图识别并点开始"
+            }
+        }
         scope.launch {
             CaptureHub.ocrText.collectLatest { ocr ->
-                if (!ocr.isNullOrBlank()) {
+                if (ocr == null) return@collectLatest
+                if (ocr.isBlank()) {
+                    statusText = "截图识别没有认出文字：可能点了取消录屏，或图片上没有文字，请重新点截图识别并点开始"
+                } else {
                     postText = ocr.take(4000)
                     statusText = "截图识别完成"
                     generate()

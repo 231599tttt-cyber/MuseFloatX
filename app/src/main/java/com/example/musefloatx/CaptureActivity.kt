@@ -37,6 +37,8 @@ class CaptureActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != 1001 || resultCode != RESULT_OK || data == null) {
+            // 取消录屏也要回传一个空结果，否则面板会一直停在“正在截图识别”。
+            CaptureHub.post("")
             finishIfNotDone()
             return
         }
