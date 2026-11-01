@@ -43,7 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.awaitPointerEventScope
+import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.text.font.FontWeight
@@ -158,11 +158,16 @@ class FloatingService : Service() {
                         // 直接跟踪手指按下到抬起：24dp 内抬起都算点按，
                         // 超过才算拖动。上一版靠拖动识别的取消回调判断点按，
                         // 在真机上并不可靠，点球经常被当成移动。
+                        // 只用 PointerInputChange 最基础的字段，避免接口版本差异。
                         val tapThreshold = 24.dp.toPx()
                         awaitPointerEventScope {
                             while (true) {
-                                val down = awaitPointerEvent().changes.firstOrNull { it.changedToDown() } ?: continue
-                                val downId = down.id
+                                var downId: PointerId? = null
+                                while (downId == null) {
+                                    val downEvent = awaitPointerEvent()
+                                    val downChange = downEvent.changes.firstOrNull { !it.previousPressed && it.pressed }
+                                    if (downChange != null) downId = downChange.id
+                                }
                                 var moved = 0f
                                 var dragging = false
                                 var done = false
@@ -170,11 +175,11 @@ class FloatingService : Service() {
                                     val event = awaitPointerEvent()
                                     for (change in event.changes) {
                                         if (change.id != downId) continue
-                                        if (change.changedToUpOrCanceled()) {
+                                        if (!change.pressed && change.previousPressed) {
                                             if (!dragging && moved < tapThreshold) onBallTap() else snapToEdge()
                                             done = true
-                                        } else {
-                                            val delta = change.positionChange()
+                                        } else if (change.pressed) {
+                                            val delta = change.position - change.previousPosition
                                             if (delta != Offset.Zero) {
                                                 change.consume()
                                                 moved += abs(delta.x) + abs(delta.y)
