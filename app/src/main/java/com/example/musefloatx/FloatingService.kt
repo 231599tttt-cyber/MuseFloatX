@@ -282,11 +282,13 @@ class FloatingService : Service() {
             return
         }
         // 简化后的主流程（第 24 版）：点球直接出面板，不再出框选、
-        // 不截图、不 OCR。面板打开时立刻读一次剪贴板（这是用户
-        // 点球这个动作触发的，不是后台持续监听），读到就直接生成，
-        // 读不到就只提示、不发无效请求，留手动粘贴输入框作备用。
-        showPanel()
+        // 不截图、不 OCR。先读一次剪贴板（这是用户点球这个动作
+        // 触发的，不是后台持续监听），读到就直接生成，读不到就
+        // 只提示、不发无效请求，留手动粘贴输入框作备用。
+        // 先读再出面板：面板打开时帖子已经填好了，正常情况下
+        // 手动粘贴区从一开始就不显示，不会先闪一下再消失。
         readClipboardAndGenerate()
+        showPanel()
     }
 
     /**
@@ -385,34 +387,41 @@ class FloatingService : Service() {
                                 modifier = Modifier.fillMaxWidth().heightIn(max = 180.dp)
                             )
                         }
-                        Spacer(Modifier.height(12.dp))
-                        // 手动粘贴输入框（备用）：只有系统不让直接读剪贴板时才用，
-                        // 在 X 里复制帖子内容，到这里点输入框长按粘贴，再点生成。
-                        // 不读屏、不截图、不依赖无障碍窗口，粘贴什么就生成什么。
-                        Text("手动粘贴（备用）", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        Spacer(Modifier.height(6.dp))
-                        OutlinedTextField(
-                            value = pasteText,
-                            onValueChange = { pasteText = it },
-                            placeholder = { Text("先在 X 里复制帖子，到这里长按粘贴") },
-                            modifier = Modifier.fillMaxWidth(),
-                            minLines = 3,
-                            maxLines = 8
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Row {
-                            Button(onClick = {
-                                val t = pasteText.trim()
-                                if (t.isNotEmpty()) {
-                                    postText = t
-                                    generate()
-                                } else {
-                                    statusText = "先粘贴帖子内容再点生成"
-                                }
-                            }, enabled = !isGenerating, modifier = Modifier.padding(end = 8.dp)) { Text("用粘贴的内容生成") }
-                            OutlinedButton(onClick = { pasteFromClipboard() }) { Text("从剪贴板粘贴") }
+                        // 手动粘贴区只在自动读剪贴板失败时显示（帖子为空时）：
+                        // 正常情况点球已经自动粘贴、自动按上次的风格生成了，
+                        // “用粘贴的内容生成”这个按钮就是多余的，留着只会让人
+                        // 手滑再点一次、再提交一次。风格按钮本身就是生成按钮：
+                        // 上次选了自然，点球就按自然生成；再点幽默，就切换一次。
+                        if (postText.isBlank()) {
+                            Spacer(Modifier.height(12.dp))
+                            // 手动粘贴输入框（备用）：只有系统不让直接读剪贴板时才用，
+                            // 在 X 里复制帖子内容，到这里点输入框长按粘贴，再点生成。
+                            // 不读屏、不截图、不依赖无障碍窗口，粘贴什么就生成什么。
+                            Text("手动粘贴（备用）", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                            Spacer(Modifier.height(6.dp))
+                            OutlinedTextField(
+                                value = pasteText,
+                                onValueChange = { pasteText = it },
+                                placeholder = { Text("先在 X 里复制帖子，到这里长按粘贴") },
+                                modifier = Modifier.fillMaxWidth(),
+                                minLines = 3,
+                                maxLines = 8
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Row {
+                                Button(onClick = {
+                                    val t = pasteText.trim()
+                                    if (t.isNotEmpty()) {
+                                        postText = t
+                                        generate()
+                                    } else {
+                                        statusText = "先粘贴帖子内容再点生成"
+                                    }
+                                }, enabled = !isGenerating, modifier = Modifier.padding(end = 8.dp)) { Text("用粘贴的内容生成") }
+                                OutlinedButton(onClick = { pasteFromClipboard() }) { Text("从剪贴板粘贴") }
+                            }
+                            Spacer(Modifier.height(12.dp))
                         }
-                        Spacer(Modifier.height(12.dp))
                         Text("风格", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                         Row {
                             listOf("自然", "幽默", "简短").forEach { s ->
