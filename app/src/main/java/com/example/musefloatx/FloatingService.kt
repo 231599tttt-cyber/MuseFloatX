@@ -73,6 +73,7 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -114,6 +115,13 @@ class FloatingService : Service() {
     private var screenW = 0
     private var ballSizePx = 0
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    // 防“长回复被短回复覆盖”：生成没有加锁时，点两次生成、换一次风格、
+    // 再点一次读取剪贴板，就会同时跑两三个请求，最后完成的那个（往往
+    // 更短）会覆盖先完成的长回复，看起来就是“先长、跳两次、变短”。
+    // 每次生成都换一个序号，旧请求的结果（哪怕晚到）一律丢弃，
+    // 只认最新一次生成的结果；同时取消上一个任务。
+    private var generateJob: Job? = null
+    private var generateSeq = 0
     private lateinit var store: SettingsStore
 
     private var postText by mutableStateOf("")
@@ -433,6 +441,10 @@ class FloatingService : Service() {
     }
 
     private fun setStyle(s: String) {
+        // 点已经选中的风格不重生成：以前点一次已选中的风格也会再发
+        // 一次请求，新回复覆盖旧回复，看起来就像“自己跳了一下”。
+        // 想用同风格再生成一次，请点面板里的“重新生成”。
+        if (s == styleState) return
         styleState = s
         store.style = s
         if (postText.isNotBlank()) generate()
@@ -441,17 +453,21 @@ class FloatingService : Service() {
     private fun generate() {
         val text = postText
         if (text.isBlank()) return
+        generateSeq += 1
+        val mySeq = generateSeq
+        generateJob?.cancel()
         statusText = "生成中…"
         replyText = ""
-        scope.launch {
+        generateJob = scope.launch {
             // 先走流式：字一出来面板上就先显示，不用等全文。
             // 速度优先：流式失败且一字没出时，只有快失败（15 秒内，
             // 多半是瞬时问题）才用非流式兜底一次；慢失败不再等第二遍
             // 全文，直接报错，用户点重新生成比干等第二遍更快。
             val startMs = System.currentTimeMillis()
             val streamResult = ApiClient.generateStream(store.baseUrl, store.apiKey, store.model, styleState, text) { piece ->
-                replyText += piece
+                if (mySeq == generateSeq) replyText += piece
             }
+            if (mySeq != generateSeq) return@launch
             if (streamResult.isSuccess) {
                 replyText = streamResult.getOrNull()?.trim() ?: replyText
                 statusText = "已生成"
@@ -466,6 +482,7 @@ class FloatingService : Service() {
                 return@launch
             }
             val fallback = ApiClient.generate(store.baseUrl, store.apiKey, store.model, styleState, text)
+            if (mySeq != generateSeq) return@launch
             fallback.onSuccess {
                 replyText = it
                 statusText = "已生成"
