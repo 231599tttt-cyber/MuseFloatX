@@ -86,9 +86,10 @@ class MuseAccessibilityService : AccessibilityService() {
             if (!node.isPassword) {
                 val bounds = Rect()
                 node.getBoundsInScreen(bounds)
-                // 容错：框和文字框相交就算，不要求中心点一定在框内，
-                // 框稍微画偏一点、没贴到屏幕边也能认到主帖文字。
-                if (Rect.intersects(rect, bounds) || rect.contains(bounds.centerX(), bounds.centerY())) {
+                // 严格框选：只认中心点落在框内的节点，框边只擦到一点的
+                // 评论区节点不再算进来，否则框住主帖也会带上评论区。
+                // 裁剪框可以精确调到只盖主帖，所以严格一点反而更准。
+                if (rect.contains(bounds.centerX(), bounds.centerY())) {
                     val t = node.text?.toString()?.trim() ?: ""
                     if (t.length >= 2 && t != "MuseFloatX") out.add(Triple(bounds.top, bounds.left, t))
                     val desc = node.contentDescription?.toString()?.trim() ?: ""

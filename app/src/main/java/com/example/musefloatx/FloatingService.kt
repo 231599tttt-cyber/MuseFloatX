@@ -19,7 +19,7 @@ import android.view.WindowManager
 import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.ui.input.pointer.awaitPointerEventScope
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -52,7 +52,7 @@ import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.onSizeChanged
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -79,9 +79,13 @@ class FloatingService : Service() {
     private var ballView: ComposeView? = null
     private var panelView: ComposeView? = null
     private var selectionView: ComposeView? = null
+    private var boxFallbackText = ""
     private var cropBox by mutableStateOf<Rect?>(null)
     private var cropScreenW by mutableStateOf(0)
     private var cropScreenH by mutableStateOf(0)
+    private var cropDragMode = "NONE"
+    private var cropDragStartBox: Rect? = null
+    private var cropDragStartPos = Offset.Zero
     private var selectionReturnToPanel = false
 
     private fun defaultCropBox(w: Int, h: Int): Rect {
@@ -369,6 +373,7 @@ class FloatingService : Service() {
     }
 
     private fun ocrFlow(cropRect: Rect? = null) {
+        if (cropRect == null) boxFallbackText = ""
         CaptureHub.cropRect = cropRect
         statusText = if (cropRect != null) "正在截图识别框内文字（本地识别，不上传）…" else "正在截图识别（本地识别，不上传）…"
         val intent = Intent(this, CaptureActivity::class.java).apply {
@@ -380,16 +385,31 @@ class FloatingService : Service() {
         scope.launch {
             delay(20000)
             if (statusText.startsWith("正在截图识别")) {
-                statusText = "截图识别超时：请确认刚才是否点了允许录屏，没点就重新点截图识别并点开始"
+                if (boxFallbackText.length >= 5) {
+                    postText = boxFallbackText
+                    boxFallbackText = ""
+                    statusText = "截图识别超时，改用无障碍结果"
+                    generate()
+                } else {
+                    statusText = "截图识别超时：请确认刚才是否点了允许录屏，没点就重新点截图识别并点开始"
+                }
             }
         }
         scope.launch {
             CaptureHub.ocrText.collectLatest { ocr ->
                 if (ocr == null) return@collectLatest
                 if (ocr.isBlank()) {
-                    statusText = "截图识别没有认出文字：可能点了取消录屏，或图片上没有文字，请重新点截图识别并点开始"
+                    if (boxFallbackText.length >= 5) {
+                        postText = boxFallbackText
+                        boxFallbackText = ""
+                        statusText = "截图没认出，改用无障碍结果"
+                        generate()
+                    } else {
+                        statusText = "截图识别没有认出文字：可能点了取消录屏，或图片上没有文字，请重新点截图识别并点开始"
+                    }
                 } else {
                     postText = ocr.take(4000)
+                    boxFallbackText = ""
                     statusText = "截图识别完成"
                     generate()
                 }
@@ -466,24 +486,13 @@ class FloatingService : Service() {
                     modifier = Modifier
                         .fillMaxSize()
                         .pointerInput(Unit) {
-                            awaitPointerEventScope {
-                                while (true) {
-                                    var downId: PointerId? = null
-                                    var downPos = Offset.Zero
-                                    while (downId == null) {
-                                        val event = awaitPointerEvent()
-                                        val change = event.changes.firstOrNull { it.pressed && !it.previousPressed }
-                                        if (change != null) {
-                                            downId = change.id
-                                            downPos = change.position
-                                            change.consume()
-                                        }
-                                    }
+                            detectDragGestures(
+                                onDragStart = { offset ->
                                     val startBox = cropBox
-                                    val startPos = downPos
-                                    var mode = "NONE"
+                                    cropDragStartBox = startBox
+                                    cropDragStartPos = offset
+                                    cropDragMode = "NONE"
                                     if (startBox != null && screenW > 0 && screenH > 0) {
-                                        // 先找手柄：用手柄视觉位置（边缘内缩后）算距离，取最近的一个。
                                         val handles = listOf(
                                             "TL" to Offset(startBox.left.toFloat(), startBox.top.toFloat()),
                                             "TR" to Offset(startBox.right.toFloat(), startBox.top.toFloat()),
@@ -499,90 +508,88 @@ class FloatingService : Service() {
                                         for ((name, raw) in handles) {
                                             val vx = raw.x.coerceIn(handleVisual, screenW - handleVisual)
                                             val vy = raw.y.coerceIn(handleVisual, screenH - handleVisual)
-                                            val d = (startPos - Offset(vx, vy)).getDistance()
+                                            val d = (offset - Offset(vx, vy)).getDistance()
                                             if (d <= handleTouch && d < bestDist) {
                                                 best = name
                                                 bestDist = d
                                             }
                                         }
-                                        mode = when {
+                                        cropDragMode = when {
                                             best != null -> best
-                                            startBox.contains(startPos.x.toInt(), startPos.y.toInt()) -> "MOVE"
+                                            startBox.contains(offset.x.toInt(), offset.y.toInt()) -> "MOVE"
                                             else -> "NONE"
                                         }
                                     }
-                                    var currentPos = startPos
-                                    var up = false
-                                    while (!up) {
-                                        val event = awaitPointerEvent()
-                                        val change = event.changes.firstOrNull { it.id == downId }
-                                        if (change == null) continue
-                                        if (!change.pressed) {
-                                            change.consume()
-                                            up = true
-                                            break
+                                },
+                                onDragEnd = {
+                                    // 松手框留住，不退出。
+                                    cropDragMode = "NONE"
+                                },
+                                onDragCancel = {
+                                    cropDragMode = "NONE"
+                                },
+                                onDrag = { change, _ ->
+                                    change.consume()
+                                    val startBox = cropDragStartBox
+                                    val mode = cropDragMode
+                                    if (mode == "NONE" || startBox == null) return@detectDragGestures
+                                    val currentPos = change.position
+                                    val bw = startBox.width()
+                                    val bh = startBox.height()
+                                    val minSize = 80
+                                    val newBox = when (mode) {
+                                        "MOVE" -> {
+                                            val dx = (currentPos.x - cropDragStartPos.x).toInt()
+                                            val dy = (currentPos.y - cropDragStartPos.y).toInt()
+                                            val nl = (startBox.left + dx).coerceIn(0, screenW - bw)
+                                            val nt = (startBox.top + dy).coerceIn(0, screenH - bh)
+                                            Rect(nl, nt, nl + bw, nt + bh)
                                         }
-                                        change.consume()
-                                        currentPos = change.position
-                                        if (mode == "NONE" || startBox == null) continue
-                                        val bw = startBox.width()
-                                        val bh = startBox.height()
-                                        val minSize = 80
-                                        val newBox = when (mode) {
-                                            "MOVE" -> {
-                                                val dx = (currentPos.x - startPos.x).toInt()
-                                                val dy = (currentPos.y - startPos.y).toInt()
-                                                val nl = (startBox.left + dx).coerceIn(0, screenW - bw)
-                                                val nt = (startBox.top + dy).coerceIn(0, screenH - bh)
-                                                Rect(nl, nt, nl + bw, nt + bh)
-                                            }
-                                            "TL" -> Rect(
-                                                currentPos.x.toInt().coerceIn(0, startBox.right - minSize),
-                                                currentPos.y.toInt().coerceIn(0, startBox.bottom - minSize),
-                                                startBox.right, startBox.bottom
-                                            )
-                                            "TR" -> Rect(
-                                                startBox.left,
-                                                currentPos.y.toInt().coerceIn(0, startBox.bottom - minSize),
-                                                currentPos.x.toInt().coerceIn(startBox.left + minSize, screenW),
-                                                startBox.bottom
-                                            )
-                                            "BL" -> Rect(
-                                                currentPos.x.toInt().coerceIn(0, startBox.right - minSize),
-                                                startBox.top,
-                                                startBox.right,
-                                                currentPos.y.toInt().coerceIn(startBox.top + minSize, screenH)
-                                            )
-                                            "BR" -> Rect(
-                                                startBox.left, startBox.top,
-                                                currentPos.x.toInt().coerceIn(startBox.left + minSize, screenW),
-                                                currentPos.y.toInt().coerceIn(startBox.top + minSize, screenH)
-                                            )
-                                            "L" -> Rect(
-                                                currentPos.x.toInt().coerceIn(0, startBox.right - minSize),
-                                                startBox.top, startBox.right, startBox.bottom
-                                            )
-                                            "R" -> Rect(
-                                                startBox.left, startBox.top,
-                                                currentPos.x.toInt().coerceIn(startBox.left + minSize, screenW),
-                                                startBox.bottom
-                                            )
-                                            "T" -> Rect(
-                                                startBox.left,
-                                                currentPos.y.toInt().coerceIn(0, startBox.bottom - minSize),
-                                                startBox.right, startBox.bottom
-                                            )
-                                            "B" -> Rect(
-                                                startBox.left, startBox.top, startBox.right,
-                                                currentPos.y.toInt().coerceIn(startBox.top + minSize, screenH)
-                                            )
-                                            else -> startBox
-                                        }
-                                        cropBox = newBox
+                                        "TL" -> Rect(
+                                            currentPos.x.toInt().coerceIn(0, startBox.right - minSize),
+                                            currentPos.y.toInt().coerceIn(0, startBox.bottom - minSize),
+                                            startBox.right, startBox.bottom
+                                        )
+                                        "TR" -> Rect(
+                                            startBox.left,
+                                            currentPos.y.toInt().coerceIn(0, startBox.bottom - minSize),
+                                            currentPos.x.toInt().coerceIn(startBox.left + minSize, screenW),
+                                            startBox.bottom
+                                        )
+                                        "BL" -> Rect(
+                                            currentPos.x.toInt().coerceIn(0, startBox.right - minSize),
+                                            startBox.top,
+                                            startBox.right,
+                                            currentPos.y.toInt().coerceIn(startBox.top + minSize, screenH)
+                                        )
+                                        "BR" -> Rect(
+                                            startBox.left, startBox.top,
+                                            currentPos.x.toInt().coerceIn(startBox.left + minSize, screenW),
+                                            currentPos.y.toInt().coerceIn(startBox.top + minSize, screenH)
+                                        )
+                                        "L" -> Rect(
+                                            currentPos.x.toInt().coerceIn(0, startBox.right - minSize),
+                                            startBox.top, startBox.right, startBox.bottom
+                                        )
+                                        "R" -> Rect(
+                                            startBox.left, startBox.top,
+                                            currentPos.x.toInt().coerceIn(startBox.left + minSize, screenW),
+                                            startBox.bottom
+                                        )
+                                        "T" -> Rect(
+                                            startBox.left,
+                                            currentPos.y.toInt().coerceIn(0, startBox.bottom - minSize),
+                                            startBox.right, startBox.bottom
+                                        )
+                                        "B" -> Rect(
+                                            startBox.left, startBox.top, startBox.right,
+                                            currentPos.y.toInt().coerceIn(startBox.top + minSize, screenH)
+                                        )
+                                        else -> startBox
                                     }
-                                    // 松手框留住，不退出、不重固定起点，等用户点确认。
+                                    cropBox = newBox
                                 }
-                            }
+                            )
                         }
                 ) {
                     Canvas(modifier = Modifier.fillMaxSize()) {
@@ -677,34 +684,21 @@ class FloatingService : Service() {
     }
 
     private fun finishSelection(rect: Rect) {
-        // 先认、后撤框选层：框选层是不抢焦点的，认的时候前台窗口还是 X；
-        // 以前是先撤层再认，撤层瞬间前台窗口可能还没切回 X，认出来就是空的，
-        // 这就是框了帖子却认不到的原因之一。
-        val text = MuseAccessibilityService.instance?.captureRegion(rect) ?: ""
+        // 先认无障碍、后撤框选层：框选层是不抢焦点的，认的时候前台窗口还是 X；
+        // 以前是先撤层再认，撤层瞬间前台窗口可能还没切回 X，认出来就是空的。
+        // 但无障碍结果不能直接信：框住主帖还认到评论区，说明无障碍节点
+        // 位置和肉眼看到的位置对不上，或者框边擦到的评论也被算进来。
+        // 所以框选一律先走框内像素 OCR：你框住什么像素，认的就是什么，
+        // 评论区不在框内像素里，就进不来；无障碍结果只留作 OCR 失败时的兜底。
+        // 注意：这一步会弹系统录屏许可，点“开始”才认得出来，点取消就
+        // 自动改用无障碍结果。
+        val accessText = MuseAccessibilityService.instance?.captureRegion(rect) ?: ""
+        boxFallbackText = accessText
         removeSelection()
-        // 关键兜底：全框住了还只认到“返回 发帖”这种界面按钮，说明 X 的主帖
-        // 文字根本不在无障碍树里，框再大也没用。这时不再拿界面按钮去生成
-        // 一句无关的回复，而是自动改用框内截图 OCR：只裁框内像素来认，
-        // 像素里主帖文字是实实在在看得见的，不依赖无障碍树。
-        // 注意：这一步会弹系统录屏许可，点“开始”才认得出来，点取消就认不到。
-        val compact = text.replace("\\s".toRegex(), "")
-        val headerOnly = text.isBlank() || compact.length < 10
-        if (headerOnly) {
-            postText = ""
-            showPanel()
-            statusText = "无障碍只读到界面按钮，没读到主帖，正在改用框内截图识别…"
-            ocrFlow(cropRect = rect)
-            return
-        }
-        if (text.length < 5) {
-            postText = text
-            statusText = "框选到的文字太短，请把框画大一点"
-        } else {
-            postText = text
-            statusText = "框选识别完成"
-        }
+        postText = ""
         showPanel()
-        if (postText.length >= 5) generate()
+        statusText = "正在截图识别框内文字（本地识别，不上传），请点开始…"
+        ocrFlow(cropRect = rect)
     }
 
     private fun removeSelection() {
