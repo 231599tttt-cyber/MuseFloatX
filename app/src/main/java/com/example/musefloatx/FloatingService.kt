@@ -41,6 +41,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -116,6 +117,9 @@ class FloatingService : Service() {
     private lateinit var store: SettingsStore
 
     private var postText by mutableStateOf("")
+    // 粘贴模式：用户在 X 里复制帖子后，在这里粘贴，不走无障碍、不走截图，
+    // 所以不再受“确认时前台是谁的窗口”影响，这是最稳的最终办法。
+    private var pasteText by mutableStateOf("")
     private var boxImageBitmap by mutableStateOf<android.graphics.Bitmap?>(null)
     private var replyText by mutableStateOf("")
     private var statusText by mutableStateOf("点悬浮球后自动识别")
@@ -273,12 +277,15 @@ class FloatingService : Service() {
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            // NOT_TOUCH_MODAL：面板外的触摸还给 X，面板开着时 X 也能滑，
-            // 之前没加这个，面板一开就像把屏幕盖住了，滑不动也关不掉。
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            // 粘贴模式必须能输入：面板不能再 NOT_FOCUSABLE，否则输入框
+            // 拿不到焦点、弹不出键盘、长按也粘贴不了。只留 NOT_TOUCH_MODAL，
+            // 面板外的触摸仍还给 X，面板开着时 X 也能滑。
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            // 键盘弹起时把面板顶上去，别盖住输入框和生成按钮。
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
         }
         val view = ComposeView(this)
         attachOwners(view)
@@ -324,6 +331,33 @@ class FloatingService : Service() {
                                 contentDescription = "框选裁剪图片",
                                 modifier = Modifier.fillMaxWidth().heightIn(max = 180.dp)
                             )
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        // 粘贴模式（最终办法）：在 X 里复制帖子内容，到这里
+                        // 点输入框长按粘贴，或者点“从剪贴板粘贴”，再点生成。
+                        // 不读屏、不截图、不依赖无障碍窗口，复制什么就生成什么。
+                        Text("粘贴帖子（最稳）", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Spacer(Modifier.height(6.dp))
+                        OutlinedTextField(
+                            value = pasteText,
+                            onValueChange = { pasteText = it },
+                            placeholder = { Text("先在 X 里复制帖子，到这里长按粘贴") },
+                            modifier = Modifier.fillMaxWidth(),
+                            minLines = 3,
+                            maxLines = 8
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Row {
+                            Button(onClick = {
+                                val t = pasteText.trim()
+                                if (t.length >= 5) {
+                                    postText = t
+                                    generate()
+                                } else {
+                                    statusText = "先粘贴帖子内容，至少 5 个字再点生成"
+                                }
+                            }, modifier = Modifier.padding(end = 8.dp)) { Text("用粘贴的内容生成") }
+                            OutlinedButton(onClick = { pasteFromClipboard() }) { Text("从剪贴板粘贴") }
                         }
                         Spacer(Modifier.height(12.dp))
                         Text("风格", fontWeight = FontWeight.Bold, fontSize = 16.sp)
@@ -460,6 +494,27 @@ class FloatingService : Service() {
         val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         cm.setPrimaryClip(ClipData.newPlainText("reply", replyText))
         Toast.makeText(this, "已复制，去 X 粘贴即可", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun pasteFromClipboard() {
+        try {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val clip = cm.primaryClip
+            val t = if (clip != null && clip.itemCount > 0) {
+                clip.getItemAt(0)?.text?.toString()?.trim() ?: ""
+            } else ""
+            if (t.length >= 5) {
+                pasteText = t
+                statusText = "已从剪贴板粘贴，点“用粘贴的内容生成”即可"
+            } else if (t.isNotEmpty()) {
+                pasteText = t
+                statusText = "剪贴板内容太短，先在 X 里复制整条帖子"
+            } else {
+                statusText = "剪贴板是空的：先在 X 里复制帖子，再点这个按钮；或点输入框长按粘贴"
+            }
+        } catch (e: Exception) {
+            statusText = "读不到剪贴板：点输入框长按粘贴（系统粘贴菜单不受这个限制）"
+        }
     }
 
     private fun removePanel() {
@@ -680,31 +735,39 @@ class FloatingService : Service() {
                         modifier = Modifier.align(Alignment.TopCenter).background(Color.Black.copy(alpha = 0.7f)).padding(8.dp)
                     )
                 }
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .align(Alignment.BottomCenter)
                         .onSizeChanged { cropBottomBarH = it.height }
                         .background(Color.Black.copy(alpha = 0.85f))
-                        .padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(12.dp)
                 ) {
-                    OutlinedButton(
-                        onClick = { if (cropScreenW > 0 && cropMaxBottom() > 0) cropBox = Rect(0, 0, cropScreenW, cropMaxBottom()) },
-                        modifier = Modifier.weight(1f).padding(end = 4.dp)
-                    ) { Text("全屏") }
-                    OutlinedButton(
-                        onClick = { if (cropScreenW > 0 && cropScreenH > 0) cropBox = defaultCropBox(cropScreenW, cropScreenH) },
-                        modifier = Modifier.weight(1f).padding(end = 4.dp)
-                    ) { Text("重置") }
-                    OutlinedButton(
-                        onClick = { cancelSelection() },
-                        modifier = Modifier.weight(1f).padding(end = 4.dp)
-                    ) { Text("取消") }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedButton(
+                            onClick = { if (cropScreenW > 0 && cropMaxBottom() > 0) cropBox = Rect(0, 0, cropScreenW, cropMaxBottom()) },
+                            modifier = Modifier.weight(1f).padding(end = 4.dp)
+                        ) { Text("全屏") }
+                        OutlinedButton(
+                            onClick = { if (cropScreenW > 0 && cropScreenH > 0) cropBox = defaultCropBox(cropScreenW, cropScreenH) },
+                            modifier = Modifier.weight(1f).padding(end = 4.dp)
+                        ) { Text("重置") }
+                        OutlinedButton(
+                            onClick = { cancelSelection() },
+                            modifier = Modifier.weight(1f).padding(end = 4.dp)
+                        ) { Text("取消") }
+                        Button(
+                            onClick = { cropBox?.let { finishSelection(it) } },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("确认") }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    // 粘贴入口：点球出框后，不想框选就点这个，直接进面板粘贴，
+                    // 不用先取消再找面板。面板里有输入框和“用粘贴的内容生成”。
                     Button(
-                        onClick = { cropBox?.let { finishSelection(it) } },
-                        modifier = Modifier.weight(1f)
-                    ) { Text("确认") }
+                        onClick = { removeSelection(); showPanel() },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("粘贴帖子生成（不用框选）") }
                 }
             }
         }
