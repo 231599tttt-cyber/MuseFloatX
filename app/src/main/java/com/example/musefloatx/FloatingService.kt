@@ -607,7 +607,7 @@ class FloatingService : Service() {
         try { generateJob?.cancel() } catch (e: Exception) { }
         try { ApiClient.cancelActive() } catch (e: Exception) { }
         isGenerating = false
-        try { panelView?.let { wm.removeView(it) } catch (e: Exception) {}
+        try { panelView?.let { wm.removeView(it) } } catch (e: Exception) {}
         panelView = null
         boxImageBitmap = null
     }
