@@ -17,7 +17,7 @@ import android.view.Gravity
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -43,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.awaitPointerEventScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.text.font.FontWeight
@@ -154,29 +155,43 @@ class FloatingService : Service() {
                     .clip(CircleShape)
                     .background(Color(0xFF7C4DFF))
                     .pointerInput(Unit) {
-                        var moved = 0f
-                        detectDragGestures(
-                            onDragStart = { moved = 0f },
-                            onDragEnd = {
-                                if (moved < 10f) {
-                                    onBallTap()
-                                } else {
-                                    snapToEdge()
+                        // 直接跟踪手指按下到抬起：24dp 内抬起都算点按，
+                        // 超过才算拖动。上一版靠拖动识别的取消回调判断点按，
+                        // 在真机上并不可靠，点球经常被当成移动。
+                        val tapThreshold = 24.dp.toPx()
+                        awaitPointerEventScope {
+                            while (true) {
+                                val down = awaitPointerEvent().changes.firstOrNull { it.changedToDown() } ?: continue
+                                val downId = down.id
+                                var moved = 0f
+                                var dragging = false
+                                var done = false
+                                while (!done) {
+                                    val event = awaitPointerEvent()
+                                    for (change in event.changes) {
+                                        if (change.id != downId) continue
+                                        if (change.changedToUpOrCanceled()) {
+                                            if (!dragging && moved < tapThreshold) onBallTap() else snapToEdge()
+                                            done = true
+                                        } else {
+                                            val delta = change.positionChange()
+                                            if (delta != Offset.Zero) {
+                                                change.consume()
+                                                moved += abs(delta.x) + abs(delta.y)
+                                                if (moved >= tapThreshold) dragging = true
+                                                if (dragging) {
+                                                    ballX = (ballX + delta.x.toInt()).coerceIn(0, screenW - ballSizePx)
+                                                    ballY = (ballY + delta.y.toInt()).coerceIn(0, resources.displayMetrics.heightPixels - ballSizePx)
+                                                    params.x = ballX
+                                                    params.y = ballY
+                                                    try { wm.updateViewLayout(view, params) } catch (e: Exception) {}
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
-                            },
-                            onDragCancel = { if (moved < 10f) onBallTap() else snapToEdge() },
-                            onDrag = { change, dragAmount ->
-                                change.consume()
-                                moved += abs(dragAmount.x) + abs(dragAmount.y)
-                                ballX = (ballX + dragAmount.x.toInt())
-                                    .coerceIn(0, screenW - ballSizePx)
-                                ballY = (ballY + dragAmount.y.toInt())
-                                    .coerceIn(0, resources.displayMetrics.heightPixels - ballSizePx)
-                                params.x = ballX
-                                params.y = ballY
-                                try { wm.updateViewLayout(view, params) } catch (e: Exception) {}
                             }
-                        )
+                        }
                     },
                 contentAlignment = Alignment.Center
             ) {
@@ -199,7 +214,12 @@ class FloatingService : Service() {
             removePanel()
             return
         }
-        showPanel()
+        try {
+            showPanel()
+        } catch (e: Exception) {
+            Toast.makeText(this, "面板打开失败：${e.message}", Toast.LENGTH_SHORT).show()
+            return
+        }
         refreshPostAndGenerate()
     }
 
