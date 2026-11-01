@@ -32,17 +32,16 @@ class CaptureActivity : Activity() {
         CaptureHub.lastOcrError = null
         CaptureHub.frozenBitmap = null
         CaptureHub.freezeCancelled = false
+        CaptureHub.freezeTimedOut = false
         freezeMode = intent?.getBooleanExtra("freeze", false) == true
         val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         @Suppress("DEPRECATION")
         startActivityForResult(mgr.createScreenCaptureIntent(), 1001)
-        handler.postDelayed({
-            if (!done) {
-                CaptureHub.lastOcrError = "截图超时：10 秒内没拿到截图，请重试并点开始"
-                CaptureHub.post("")
-            }
-            finishIfNotDone()
-        }, 10000)
+        // 注意：这里不能再放 10 秒超时。点球后系统要先弹两步许可
+        // （下一步 -> 选 X -> 开始），用户慢慢点很容易超过 10 秒，
+        // 超时一到 Activity 自己就关了，之后就算点了开始也拿不到图，
+        // 框要么不出，要么很久以后才迟到别的 App 上。超时改到
+        // 拿到许可之后才开始算，见 onActivityResult。
     }
 
     @Deprecated("Deprecated in Java")
@@ -56,6 +55,16 @@ class CaptureActivity : Activity() {
             finishIfNotDone()
             return
         }
+        // 许可拿到之后才开始算超时：8 秒内没拿到第一帧才算超时，
+        // 这样用户在许可对话框里花多久都不影响。
+        handler.postDelayed({
+            if (!done) {
+                if (freezeMode) CaptureHub.freezeTimedOut = true
+                else CaptureHub.lastOcrError = "截图超时：8 秒内没拿到截图，请重试并点开始"
+                CaptureHub.post("")
+            }
+            finishIfNotDone()
+        }, 8000)
         try {
             val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             projection = mgr.getMediaProjection(resultCode, data)
@@ -141,6 +150,7 @@ class CaptureActivity : Activity() {
     private fun finishIfNotDone() {
         if (done) return
         done = true
+        handler.removeCallbacksAndMessages(null)
         try { virtualDisplay?.release() } catch (e: Exception) {}
         try { imageReader?.close() } catch (e: Exception) {}
         try { projection?.stop() } catch (e: Exception) {}

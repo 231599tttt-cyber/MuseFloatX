@@ -31,6 +31,7 @@ object CaptureHub {
     // 进入框选前先冻住的整屏截图，框选层就画在这张图上，X 页面不会动。
     @Volatile var frozenBitmap: android.graphics.Bitmap? = null
     @Volatile var freezeCancelled: Boolean = false
+    @Volatile var freezeTimedOut: Boolean = false
     // 框选完成后要给用户看的实际裁剪图（像素证据），面板里直接显示。
     @Volatile var croppedBitmap: android.graphics.Bitmap? = null
     // 识别失败的具体原因，不允许静默失败：取消许可、超时、OCR 失败等

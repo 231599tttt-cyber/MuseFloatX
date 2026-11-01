@@ -482,18 +482,29 @@ class FloatingService : Service() {
         startActivity(intent)
         scope.launch {
             var waited = 0
-            while (waited < 15000) {
+            while (waited < 60000) {
                 val bmp = CaptureHub.frozenBitmap
                 if (bmp != null) {
                     showSelectionOverlay(bmp)
                     return@launch
                 }
-                if (CaptureHub.freezeCancelled) break
+                if (CaptureHub.freezeCancelled) {
+                    Toast.makeText(this@FloatingService, "录屏许可被取消，改用透明框选", Toast.LENGTH_SHORT).show()
+                    showSelectionOverlay(null)
+                    return@launch
+                }
+                if (CaptureHub.freezeTimedOut) {
+                    Toast.makeText(this@FloatingService, "冻屏超时，改用透明框选", Toast.LENGTH_SHORT).show()
+                    showSelectionOverlay(null)
+                    return@launch
+                }
                 delay(200)
                 waited += 200
             }
-            Toast.makeText(this@FloatingService, "截图许可被取消或超时，改用透明框选", Toast.LENGTH_SHORT).show()
-            showSelectionOverlay(null)
+            // 60 秒都没等到冻屏结果（比如 Activity 异常退出了），
+            // 绝不能再把框迟到别的 App 上：直接回面板，让用户重新点球。
+            Toast.makeText(this@FloatingService, "冻屏没拿到，请重新点悬浮球", Toast.LENGTH_SHORT).show()
+            if (selectionReturnToPanel) showPanel()
         }
     }
 
