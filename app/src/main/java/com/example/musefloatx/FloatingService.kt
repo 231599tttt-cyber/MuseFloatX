@@ -10,14 +10,20 @@ import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.os.Build
 import android.os.IBinder
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.WindowManager
 import android.widget.Toast
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -71,6 +77,10 @@ class FloatingService : Service() {
     private val lifecycleOwner = ServiceLifecycleOwner()
     private var ballView: ComposeView? = null
     private var panelView: ComposeView? = null
+    private var selectionView: ComposeView? = null
+    private var selectionStart by mutableStateOf(Offset.Zero)
+    private var selectionCurrent by mutableStateOf(Offset.Zero)
+    private var selecting by mutableStateOf(false)
     private var ballParams: WindowManager.LayoutParams? = null
     private var ballX = 0
     private var ballY = 0
@@ -216,6 +226,10 @@ class FloatingService : Service() {
     }
 
     private fun onBallTap() {
+        if (selectionView != null) {
+            cancelSelection()
+            return
+        }
         if (panelView != null) {
             removePanel()
             return
@@ -285,6 +299,7 @@ class FloatingService : Service() {
                     Spacer(Modifier.height(8.dp))
                     Row {
                         OutlinedButton(onClick = { refreshPostOnly() }, modifier = Modifier.padding(end = 8.dp)) { Text("重新识别") }
+                        OutlinedButton(onClick = { showSelectionOverlay() }, modifier = Modifier.padding(end = 8.dp)) { Text("框选识别") }
                         OutlinedButton(onClick = { removePanel() }) { Text("关闭") }
                     }
                     Spacer(Modifier.height(6.dp))
@@ -378,8 +393,131 @@ class FloatingService : Service() {
         panelView = null
     }
 
+    /**
+     * 框选识别：先收起面板，铺一层全屏透明层让用户拖一个框，
+     * 松手后只读框内中心点落入的无障碍文字，不读框外评论区。
+     * 框太小算取消，回到面板。
+     */
+    private fun showSelectionOverlay() {
+        removePanel()
+        if (selectionView != null) return
+        selecting = false
+        selectionStart = Offset.Zero
+        selectionCurrent = Offset.Zero
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = 0
+            y = 0
+        }
+        val view = ComposeView(this)
+        attachOwners(view)
+        view.setContent {
+            // 外层 Box 铺满全屏，选框坐标就是屏幕坐标；
+            // 提示条浮在顶部，不占选框区域的布局高度，避免坐标错位。
+            Box(modifier = Modifier.fillMaxSize()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(Unit) {
+                            detectDragGestures(
+                                onDragStart = { offset ->
+                                    selectionStart = offset
+                                    selectionCurrent = offset
+                                    selecting = true
+                                },
+                                onDragEnd = {
+                                    selecting = false
+                                    val left = minOf(selectionStart.x, selectionCurrent.x).toInt()
+                                    val top = minOf(selectionStart.y, selectionCurrent.y).toInt()
+                                    val right = maxOf(selectionStart.x, selectionCurrent.x).toInt()
+                                    val bottom = maxOf(selectionStart.y, selectionCurrent.y).toInt()
+                                    if (right - left < 80 || bottom - top < 80) {
+                                        cancelSelection()
+                                    } else {
+                                        finishSelection(Rect(left, top, right, bottom))
+                                    }
+                                },
+                                onDragCancel = { cancelSelection() },
+                                onDrag = { change, _ ->
+                                    change.consume()
+                                    selectionCurrent = change.position
+                                }
+                            )
+                        }
+                ) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        if (selecting) {
+                            val left = minOf(selectionStart.x, selectionCurrent.x)
+                            val top = minOf(selectionStart.y, selectionCurrent.y)
+                            val width = kotlin.math.abs(selectionCurrent.x - selectionStart.x)
+                            val height = kotlin.math.abs(selectionCurrent.y - selectionStart.y)
+                            drawRect(
+                                color = Color(0xFF7C4DFF),
+                                topLeft = Offset(left, top),
+                                size = Size(width, height),
+                                style = Stroke(width = 6f)
+                            )
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.TopCenter)
+                        .background(Color.Black.copy(alpha = 0.7f))
+                        .padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "拖动框选帖子内容，松手后只识别框内文字",
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Button(onClick = { cancelSelection() }) { Text("取消") }
+                }
+            }
+        }
+        selectionView = view
+        wm.addView(view, params)
+    }
+
+    private fun cancelSelection() {
+        removeSelection()
+        statusText = "已取消框选"
+        showPanel()
+    }
+
+    private fun finishSelection(rect: Rect) {
+        removeSelection()
+        val text = MuseAccessibilityService.instance?.captureRegion(rect) ?: ""
+        if (text.isBlank()) {
+            postText = ""
+            statusText = "框选区域内没有读到文字，请把框画大一点，框住帖子文字"
+        } else {
+            postText = text
+            statusText = "框选识别完成"
+        }
+        showPanel()
+        if (postText.length >= 20) generate()
+        else if (text.isNotBlank()) statusText = "框选到的文字太短，请把框画大一点"
+    }
+
+    private fun removeSelection() {
+        try { selectionView?.let { wm.removeView(it) } } catch (e: Exception) {}
+        selectionView = null
+        selecting = false
+    }
+
     private fun removeViews() {
         removePanel()
+        removeSelection()
         try { ballView?.let { wm.removeView(it) } } catch (e: Exception) {}
         ballView = null
     }

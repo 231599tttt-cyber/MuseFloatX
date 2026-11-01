@@ -1,6 +1,7 @@
 package com.example.musefloatx
 
 import android.accessibilityservice.AccessibilityService
+import android.graphics.Rect
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 
@@ -42,6 +43,51 @@ class MuseAccessibilityService : AccessibilityService() {
             }
         } catch (e: Exception) {
             // 忽略单次读取失败，不中断服务
+        }
+    }
+
+    /**
+     * 只读用户框选区域内的文字：取中心点落在框内的叶子节点，
+     * 按从上到下、从左到右排序去重。主帖被评论区淹没时，
+     * 用户框住主帖就能只认主帖，不读评论区。
+     */
+    fun captureRegion(rect: Rect): String {
+        try {
+            val root = rootInActiveWindow ?: return ""
+            if (root.packageName?.toString() != X_PACKAGE) return ""
+            val items = mutableListOf<Triple<Int, Int, String>>()
+            collectRegion(root, rect, items, 0)
+            val seen = LinkedHashSet<String>()
+            val sb = StringBuilder()
+            for ((_, _, t) in items.sortedWith(compareBy({ it.first }, { it.second }))) {
+                if (seen.add(t)) {
+                    if (sb.isNotEmpty()) sb.append("\n")
+                    sb.append(t)
+                }
+            }
+            return sb.toString().take(4000)
+        } catch (e: Exception) {
+            return ""
+        }
+    }
+
+    private fun collectRegion(node: AccessibilityNodeInfo?, rect: Rect, out: MutableList<Triple<Int, Int, String>>, depth: Int) {
+        if (node == null || depth > 30) return
+        try {
+            if (!node.isPassword && node.childCount == 0) {
+                val bounds = Rect()
+                node.getBoundsInScreen(bounds)
+                if (rect.contains(bounds.centerX(), bounds.centerY())) {
+                    val t = node.text?.toString()?.trim() ?: ""
+                    if (t.length >= 2 && t != "MuseFloatX") out.add(Triple(bounds.top, bounds.left, t))
+                    val desc = node.contentDescription?.toString()?.trim() ?: ""
+                    if (desc.length >= 2) out.add(Triple(bounds.top, bounds.left, desc))
+                }
+            }
+            for (i in 0 until node.childCount) {
+                collectRegion(node.getChild(i), rect, out, depth + 1)
+            }
+        } catch (e: Exception) {
         }
     }
 
