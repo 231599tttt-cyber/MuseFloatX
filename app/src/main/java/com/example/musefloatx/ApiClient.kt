@@ -3,6 +3,7 @@ package com.example.musefloatx
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -16,6 +17,16 @@ object ApiClient {
         .readTimeout(90, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
+
+    // 当前正在跑的那一次服务端请求。服务端同一时间只跑一个生成
+    // （GEN_LOCK），App 发两三个请求只会让它们在服务端排队，
+    // 最后一个要等前面全部跑完，体感就是 20 多秒。
+    // 所以 App 侧必须一次只发一个：新请求开始前先取消旧的这一通，
+    // 服务端收到断连会释放锁，而不是让旧请求继续在后台跑完。
+    @Volatile private var activeCall: Call? = null
+    fun cancelActive() {
+        try { activeCall?.cancel() } catch (e: Exception) { }
+    }
 
     /**
      * 速度优先的 token 上限：回复本来就短，400 个 token 要生成很久
@@ -66,7 +77,10 @@ object ApiClient {
                 .addHeader("Content-Type", "application/json")
                 .post(body.toString().toRequestBody("application/json".toMediaType()))
                 .build()
-            client.newCall(req).execute().use { resp ->
+            val call = client.newCall(req)
+            activeCall = call
+            try {
+                call.execute().use { resp ->
                 val raw = resp.body?.string() ?: ""
                 if (!resp.isSuccessful) {
                     return@withContext Result.failure(Exception("HTTP ${resp.code}：${raw.take(500)}"))
@@ -89,6 +103,9 @@ object ApiClient {
                 }.trim()
                 if (text.isBlank()) Result.failure(Exception("服务返回了空回复"))
                 else Result.success(text)
+                }
+            } finally {
+                if (activeCall == call) activeCall = null
             }
         } catch (e: Exception) {
             Result.failure(Exception(e.message ?: "请求失败"))
@@ -133,7 +150,10 @@ object ApiClient {
                 .addHeader("Accept", "text/event-stream")
                 .post(body.toString().toRequestBody("application/json".toMediaType()))
                 .build()
-            client.newCall(req).execute().use { resp ->
+            val call = client.newCall(req)
+            activeCall = call
+            try {
+                call.execute().use { resp ->
                 if (!resp.isSuccessful) {
                     val raw = resp.body?.string() ?: ""
                     return@withContext Result.failure(Exception("HTTP ${resp.code}：${raw.take(500)}"))
@@ -166,6 +186,9 @@ object ApiClient {
                 val text = sb.toString().trim()
                 if (text.isBlank()) Result.failure(Exception("服务返回了空回复"))
                 else Result.success(text)
+                }
+            } finally {
+                if (activeCall == call) activeCall = null
             }
         } catch (e: Exception) {
             Result.failure(Exception(e.message ?: "请求失败"))

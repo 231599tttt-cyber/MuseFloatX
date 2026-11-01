@@ -122,6 +122,11 @@ class FloatingService : Service() {
     // 只认最新一次生成的结果；同时取消上一个任务。
     private var generateJob: Job? = null
     private var generateSeq = 0
+    // 是否正在生成：生成中再点任何生成入口都直接忽略，不再发第二、
+    // 第三次请求去服务端排队——排队才是 20 多秒的真正原因。
+    // 只有面板里“重新生成”是强制的：它先取消当前这一通再发新的，
+    // 保证任何时刻服务端只跑一个。
+    private var isGenerating by mutableStateOf(false)
     private lateinit var store: SettingsStore
 
     private var postText by mutableStateOf("")
@@ -398,7 +403,7 @@ class FloatingService : Service() {
                                 } else {
                                     statusText = "先粘贴帖子内容再点生成"
                                 }
-                            }, modifier = Modifier.padding(end = 8.dp)) { Text("用粘贴的内容生成") }
+                            }, enabled = !isGenerating, modifier = Modifier.padding(end = 8.dp)) { Text("用粘贴的内容生成") }
                             OutlinedButton(onClick = { pasteFromClipboard() }) { Text("从剪贴板粘贴") }
                         }
                         Spacer(Modifier.height(12.dp))
@@ -407,9 +412,9 @@ class FloatingService : Service() {
                             listOf("自然", "幽默", "简短").forEach { s ->
                                 val selected = styleState == s
                                 if (selected) {
-                                    Button(onClick = { setStyle(s) }, modifier = Modifier.padding(end = 8.dp)) { Text(s) }
+                                    Button(onClick = { setStyle(s) }, enabled = !isGenerating, modifier = Modifier.padding(end = 8.dp)) { Text(s) }
                                 } else {
-                                    OutlinedButton(onClick = { setStyle(s) }, modifier = Modifier.padding(end = 8.dp)) { Text(s) }
+                                    OutlinedButton(onClick = { setStyle(s) }, enabled = !isGenerating, modifier = Modifier.padding(end = 8.dp)) { Text(s) }
                                 }
                             }
                         }
@@ -425,10 +430,10 @@ class FloatingService : Service() {
                             Button(onClick = { copyReply() }, modifier = Modifier.padding(end = 8.dp)) { Text("复制") }
                             // 重新生成只对当前原文再生成一次，不重读剪贴板，
                             // 避免面板开着时剪贴板已被别的内容覆盖。
-                            OutlinedButton(onClick = { generate() }, modifier = Modifier.padding(end = 8.dp)) { Text("重新生成") }
+                            OutlinedButton(onClick = { generate(force = true) }, modifier = Modifier.padding(end = 8.dp)) { Text("重新生成") }
                             // 简化后不再有截图/框选入口：主流程就是剪贴板，
                             // 读不到时用下面手动粘贴输入框，不再依赖 OCR。
-                            OutlinedButton(onClick = { readClipboardAndGenerate() }) { Text("读取剪贴板") }
+                            OutlinedButton(onClick = { readClipboardAndGenerate() }, enabled = !isGenerating) { Text("读取剪贴板") }
                         }
                         Spacer(Modifier.height(6.dp))
                         Text("只生成建议，不会自动发送，请你自己粘贴。点一下悬浮球也能关闭面板。", fontSize = 12.sp, color = Color.Gray)
@@ -449,13 +454,24 @@ class FloatingService : Service() {
         store.style = s
         if (postText.isNotBlank()) generate()
     }
+    // generate() 本体见下：force=true 仅供“重新生成”用
 
-    private fun generate() {
+    private fun generate(force: Boolean = false) {
         val text = postText
         if (text.isBlank()) return
+        // 关键：生成中，非强制入口一律直接返回，不发新请求。
+        // 以前这里是“取消旧任务再发新的”，但取消 App 侧任务并不能
+        // 停掉已经发到服务端的请求（阻塞的 HTTP 调用不会被协程取消
+        // 打断），旧请求仍在服务端占着唯一的生成锁，新请求只能排队，
+        // 排两三个就是 20 多秒。正确做法是：生成中就不发新的。
+        if (isGenerating && !force) return
+        if (force) {
+            generateJob?.cancel()
+            ApiClient.cancelActive()
+        }
         generateSeq += 1
         val mySeq = generateSeq
-        generateJob?.cancel()
+        isGenerating = true
         statusText = "生成中…"
         replyText = ""
         generateJob = scope.launch {
@@ -471,14 +487,17 @@ class FloatingService : Service() {
             if (streamResult.isSuccess) {
                 replyText = streamResult.getOrNull()?.trim() ?: replyText
                 statusText = "已生成"
+                if (mySeq == generateSeq) isGenerating = false
                 return@launch
             }
             if (replyText.isNotBlank()) {
                 statusText = "已生成（部分）"
+                if (mySeq == generateSeq) isGenerating = false
                 return@launch
             }
             if (System.currentTimeMillis() - startMs > 15_000) {
                 statusText = "生成失败：${streamResult.exceptionOrNull()?.message ?: "请求失败"}，点重新生成再试一次"
+                if (mySeq == generateSeq) isGenerating = false
                 return@launch
             }
             val fallback = ApiClient.generate(store.baseUrl, store.apiKey, store.model, styleState, text)
@@ -489,6 +508,7 @@ class FloatingService : Service() {
             }.onFailure {
                 statusText = "生成失败：${it.message}"
             }
+            if (mySeq == generateSeq) isGenerating = false
         }
     }
 
@@ -571,7 +591,12 @@ class FloatingService : Service() {
     }
 
     private fun removePanel() {
-        try { panelView?.let { wm.removeView(it) } } catch (e: Exception) {}
+        // 关面板就停掉正在跑的生成：否则关了面板、服务端还在跑，
+        // 下次点球的新请求又要排队，越用越慢。
+        try { generateJob?.cancel() } catch (e: Exception) { }
+        try { ApiClient.cancelActive() } catch (e: Exception) { }
+        isGenerating = false
+        try { panelView?.let { wm.removeView(it) } catch (e: Exception) {}
         panelView = null
         boxImageBitmap = null
     }
