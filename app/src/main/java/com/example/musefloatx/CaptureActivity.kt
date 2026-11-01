@@ -22,6 +22,7 @@ class CaptureActivity : Activity() {
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
     private var done = false
+    private var freezeMode = false
     private val handler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -31,7 +32,7 @@ class CaptureActivity : Activity() {
         CaptureHub.lastOcrError = null
         CaptureHub.frozenBitmap = null
         CaptureHub.freezeCancelled = false
-        val freezeMode = intent?.getBooleanExtra("freeze", false) == true
+        freezeMode = intent?.getBooleanExtra("freeze", false) == true
         val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         @Suppress("DEPRECATION")
         startActivityForResult(mgr.createScreenCaptureIntent(), 1001)
@@ -101,7 +102,7 @@ class CaptureActivity : Activity() {
     }
 
     private fun recognize(bitmap: Bitmap) {
-        if (intent?.getBooleanExtra("freeze", false) == true) {
+        if (freezeMode) {
             CaptureHub.frozenBitmap = bitmap
             finishIfNotDone()
             return
