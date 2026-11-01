@@ -418,9 +418,13 @@ class FloatingService : Service() {
                             listOf("自然", "幽默", "简短").forEach { s ->
                                 val selected = styleState == s
                                 if (selected) {
+                                    // 正在生成时，再点已选中的风格是重复提交，置灰点不动。
                                     Button(onClick = { setStyle(s) }, enabled = !isGenerating, modifier = Modifier.padding(end = 8.dp)) { Text(s) }
                                 } else {
-                                    OutlinedButton(onClick = { setStyle(s) }, enabled = !isGenerating, modifier = Modifier.padding(end = 8.dp)) { Text(s) }
+                                    // 正在生成时，点另一个风格是换风格重来，要能点：
+                                    // 它会先取消当前那一通，再用新风格提交一次，
+                                    // 不是在旧的上面再叠加一通。
+                                    OutlinedButton(onClick = { setStyle(s) }, modifier = Modifier.padding(end = 8.dp)) { Text(s) }
                                 }
                             }
                         }
@@ -452,13 +456,23 @@ class FloatingService : Service() {
     }
 
     private fun setStyle(s: String) {
-        // 点哪个就生成哪个：不生成时，点自然就提交一次自然，
-        // 点幽默就提交一次幽默，重复点自然也是再提交一次自然。
-        // 生成中时只换风格设置、不提交：等当前这一通完成后再点，
-        // 才会用新风格提交新的一通，绝不中途再叠加一通。
+        // 换风格重来的逻辑，分三种，不能混成一种：
+        // 1. 没在生成时：点自然就提交一次自然，点幽默就提交一次幽默，
+        //    重复点自然也是再提交一次自然，原文不变、不重读剪贴板。
+        // 2. 正在生成时，点已选中的风格：是重复提交，直接忽略，
+        //    按钮本身也置灰点不动。
+        // 3. 正在生成时，点另一个风格：是用户明确要换风格重来，
+        //    不是重复提交。先把当前那一通取消（断 HTTP、服务端释锁，
+        //    旧的不会继续跑完），再用新风格提交一次，同一原文。
+        //    这是替换，不是叠加：任何时刻服务端只跑一个。
+        if (isGenerating && s == styleState) return
+        if (isGenerating) {
+            generateJob?.cancel()
+            ApiClient.cancelActive()
+            isGenerating = false
+        }
         styleState = s
         store.style = s
-        if (isGenerating) return
         if (postText.isNotBlank()) generate()
     }
     private fun generate() {
@@ -469,7 +483,9 @@ class FloatingService : Service() {
         // 不用序号遮掩。取消重发表面上只显示一次，实际上旧请求
         // 已经在服务端占锁生成，新请求还是要等它，速度还是相加。
         // 只有等当前这一通完成，或关面板真正取消后，下一次点击
-        // 才提交新的一通。序号守卫只留作关面板竞态的安全网，
+        // 才提交新的一通。唯一例外是换风格重来：setStyle 会先取消
+        // 当前那一通、把 isGenerating 清掉，再调 generate() 提交新风格，
+        // 那是替换一通，不是叠加一通。序号守卫只留作关面板竞态的安全网，
         // 不是用来遮掩多次提交的。
         if (isGenerating) return
         generateSeq += 1
