@@ -96,6 +96,7 @@ class FloatingService : Service() {
         return limit.coerceAtLeast(0)
     }
     private var cropDragMode = "NONE"
+    private var cropDragHint by mutableStateOf("")
     private var cropDragStartBox: Rect? = null
     private var cropDragStartPos = Offset.Zero
     private var selectionReturnToPanel = false
@@ -570,12 +571,27 @@ class FloatingService : Service() {
                     modifier = Modifier
                         .fillMaxSize()
                         .pointerInput(Unit) {
-                            detectDragGestures(
-                                onDragStart = { offset ->
+                            // 不再用 detectDragGestures：悬浮球那种直接跟踪手指
+                            // 按下到抬起的办法在真机上是通的，框选改成同一套。
+                            // 按下那一刻就判手柄/框内移动，不用等滑动阈值；
+                            // 手指每动一次就按当前位置重算框，框跟手指走。
+                            awaitPointerEventScope {
+                                while (true) {
+                                    var downId: PointerId? = null
+                                    var downPos = Offset.Zero
+                                    while (downId == null) {
+                                        val downEvent = awaitPointerEvent()
+                                        val downChange = downEvent.changes.firstOrNull { !it.previousPressed && it.pressed }
+                                        if (downChange != null) {
+                                            downId = downChange.id
+                                            downPos = downChange.position
+                                        }
+                                    }
                                     val startBox = cropBox
                                     cropDragStartBox = startBox
-                                    cropDragStartPos = offset
+                                    cropDragStartPos = downPos
                                     cropDragMode = "NONE"
+                                    cropDragHint = ""
                                     if (startBox != null && cropScreenW > 0 && cropScreenH > 0) {
                                         val handles = listOf(
                                             "TL" to Offset(startBox.left.toFloat(), startBox.top.toFloat()),
@@ -592,7 +608,7 @@ class FloatingService : Service() {
                                         for ((name, raw) in handles) {
                                             val vx = raw.x.coerceIn(handleVisual, cropScreenW - handleVisual)
                                             val vy = raw.y.coerceIn(handleVisual, cropScreenH - handleVisual)
-                                            val d = (offset - Offset(vx, vy)).getDistance()
+                                            val d = (downPos - Offset(vx, vy)).getDistance()
                                             if (d <= handleTouch && d < bestDist) {
                                                 best = name
                                                 bestDist = d
@@ -600,85 +616,69 @@ class FloatingService : Service() {
                                         }
                                         cropDragMode = when {
                                             best != null -> best
-                                            startBox.contains(offset.x.toInt(), offset.y.toInt()) -> "MOVE"
+                                            startBox.contains(downPos.x.toInt(), downPos.y.toInt()) -> "MOVE"
                                             else -> "NONE"
                                         }
-                                    }
-                                },
-                                onDragEnd = {
-                                    // 松手框留住，不退出。
-                                    cropDragMode = "NONE"
-                                },
-                                onDragCancel = {
-                                    cropDragMode = "NONE"
-                                },
-                                onDrag = { change, _ ->
-                                    change.consume()
-                                    val startBox = cropDragStartBox
-                                    val mode = cropDragMode
-                                    if (mode == "NONE" || startBox == null) return@detectDragGestures
-                                    val currentPos = change.position
-                                    val bw = startBox.width()
-                                    val bh = startBox.height()
-                                    val minSize = 80
-                                    val newBox = when (mode) {
-                                        "MOVE" -> {
-                                            val dx = (currentPos.x - cropDragStartPos.x).toInt()
-                                            val dy = (currentPos.y - cropDragStartPos.y).toInt()
-                                            val nl = (startBox.left + dx).coerceIn(0, cropScreenW - bw)
-                                            val nt = (startBox.top + dy).coerceIn(0, cropMaxBottom() - bh)
-                                            Rect(nl, nt, nl + bw, nt + bh)
+                                        cropDragHint = when (cropDragMode) {
+                                            "TL" -> "正在拖：左上角"
+                                            "TR" -> "正在拖：右上角"
+                                            "BL" -> "正在拖：左下角"
+                                            "BR" -> "正在拖：右下角"
+                                            "L" -> "正在拖：左边"
+                                            "R" -> "正在拖：右边"
+                                            "T" -> "正在拖：上边"
+                                            "B" -> "正在拖：下边"
+                                            "MOVE" -> "正在拖：移动整框"
+                                            else -> ""
                                         }
-                                        "TL" -> Rect(
-                                            currentPos.x.toInt().coerceIn(0, startBox.right - minSize),
-                                            currentPos.y.toInt().coerceIn(0, startBox.bottom - minSize),
-                                            startBox.right, startBox.bottom
-                                        )
-                                        "TR" -> Rect(
-                                            startBox.left,
-                                            currentPos.y.toInt().coerceIn(0, startBox.bottom - minSize),
-                                            currentPos.x.toInt().coerceIn(startBox.left + minSize, cropScreenW),
-                                            startBox.bottom
-                                        )
-                                        "BL" -> Rect(
-                                            currentPos.x.toInt().coerceIn(0, startBox.right - minSize),
-                                            startBox.top,
-                                            startBox.right,
-                                            currentPos.y.toInt().coerceIn(startBox.top + minSize, cropMaxBottom())
-                                        )
-                                        "BR" -> Rect(
-                                            startBox.left, startBox.top,
-                                            currentPos.x.toInt().coerceIn(startBox.left + minSize, cropScreenW),
-                                            currentPos.y.toInt().coerceIn(startBox.top + minSize, cropMaxBottom())
-                                        )
-                                        "L" -> Rect(
-                                            currentPos.x.toInt().coerceIn(0, startBox.right - minSize),
-                                            startBox.top, startBox.right, startBox.bottom
-                                        )
-                                        "R" -> Rect(
-                                            startBox.left, startBox.top,
-                                            currentPos.x.toInt().coerceIn(startBox.left + minSize, cropScreenW),
-                                            startBox.bottom
-                                        )
-                                        "T" -> Rect(
-                                            startBox.left,
-                                            currentPos.y.toInt().coerceIn(0, startBox.bottom - minSize),
-                                            startBox.right, startBox.bottom
-                                        )
-                                        "B" -> Rect(
-                                            startBox.left, startBox.top, startBox.right,
-                                            currentPos.y.toInt().coerceIn(startBox.top + minSize, cropMaxBottom())
-                                        )
-                                        else -> startBox
                                     }
-                                    cropBox = newBox
+                                    var done = false
+                                    while (!done) {
+                                        val event = awaitPointerEvent()
+                                        for (change in event.changes) {
+                                            if (change.id != downId) continue
+                                            if (!change.pressed && change.previousPressed) {
+                                                done = true
+                                            } else if (change.pressed) {
+                                                val mode = cropDragMode
+                                                val sb = cropDragStartBox
+                                                if (mode == "NONE" || sb == null) continue
+                                                if (change.position == change.previousPosition) continue
+                                                change.consume()
+                                                val currentPos = change.position
+                                                val bw = sb.width()
+                                                val bh = sb.height()
+                                                val minSize = 80
+                                                val newBox = when (mode) {
+                                                    "MOVE" -> {
+                                                        val dx = (currentPos.x - cropDragStartPos.x).toInt()
+                                                        val dy = (currentPos.y - cropDragStartPos.y).toInt()
+                                                        val nl = (sb.left + dx).coerceIn(0, cropScreenW - bw)
+                                                        val nt = (sb.top + dy).coerceIn(0, cropMaxBottom() - bh)
+                                                        Rect(nl, nt, nl + bw, nt + bh)
+                                                    }
+                                                    "TL" -> Rect(currentPos.x.toInt().coerceIn(0, sb.right - minSize), currentPos.y.toInt().coerceIn(0, sb.bottom - minSize), sb.right, sb.bottom)
+                                                    "TR" -> Rect(sb.left, currentPos.y.toInt().coerceIn(0, sb.bottom - minSize), currentPos.x.toInt().coerceIn(sb.left + minSize, cropScreenW), sb.bottom)
+                                                    "BL" -> Rect(currentPos.x.toInt().coerceIn(0, sb.right - minSize), sb.top, sb.right, currentPos.y.toInt().coerceIn(sb.top + minSize, cropMaxBottom()))
+                                                    "BR" -> Rect(sb.left, sb.top, currentPos.x.toInt().coerceIn(sb.left + minSize, cropScreenW), currentPos.y.toInt().coerceIn(sb.top + minSize, cropMaxBottom()))
+                                                    "L" -> Rect(currentPos.x.toInt().coerceIn(0, sb.right - minSize), sb.top, sb.right, sb.bottom)
+                                                    "R" -> Rect(sb.left, sb.top, currentPos.x.toInt().coerceIn(sb.left + minSize, cropScreenW), sb.bottom)
+                                                    "T" -> Rect(sb.left, currentPos.y.toInt().coerceIn(0, sb.bottom - minSize), sb.right, sb.bottom)
+                                                    "B" -> Rect(sb.left, sb.top, sb.right, currentPos.y.toInt().coerceIn(sb.top + minSize, cropMaxBottom()))
+                                                    else -> sb
+                                                }
+                                                cropBox = newBox
+                                            }
+                                        }
+                                    }
+                                    cropDragMode = "NONE"
+                                    cropDragHint = ""
                                 }
-                            )
+                            }
                         }
                 ) {
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         val b = box ?: return@Canvas
-                        // 框外变暗，框里保持原样，裁图感就出来了。
                         val dim = Color.Black.copy(alpha = 0.5f)
                         drawRect(dim, Offset(0f, 0f), Size(size.width, b.top.toFloat()))
                         drawRect(dim, Offset(0f, b.bottom.toFloat()), Size(size.width, size.height - b.bottom))
@@ -690,8 +690,6 @@ class FloatingService : Service() {
                             size = Size((b.right - b.left).toFloat(), (b.bottom - b.top).toFloat()),
                             style = Stroke(width = 6f)
                         )
-                        // 8 个手柄：四个角 + 四条边中间，手柄大，边缘处自动往里缩，
-                        // 但框的边线仍然可以贴到屏幕最边缘。
                         val raws = listOf(
                             Offset(b.left.toFloat(), b.top.toFloat()),
                             Offset(b.right.toFloat(), b.top.toFloat()),
@@ -709,6 +707,14 @@ class FloatingService : Service() {
                             drawCircle(Color(0xFF7C4DFF), radius = handleVisual, center = Offset(vx, vy), style = Stroke(width = 4f))
                         }
                     }
+                }
+                if (cropDragHint.isNotEmpty()) {
+                    Text(
+                        cropDragHint,
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        modifier = Modifier.align(Alignment.TopCenter).background(Color.Black.copy(alpha = 0.7f)).padding(8.dp)
+                    )
                 }
                 Row(
                     modifier = Modifier
