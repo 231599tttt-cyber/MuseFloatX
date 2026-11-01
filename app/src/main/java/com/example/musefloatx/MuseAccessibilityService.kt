@@ -81,10 +81,15 @@ class MuseAccessibilityService : AccessibilityService() {
     private fun collectRegion(node: AccessibilityNodeInfo?, rect: Rect, out: MutableList<Triple<Int, Int, String>>, depth: Int) {
         if (node == null || depth > 30) return
         try {
-            if (!node.isPassword && node.childCount == 0) {
+            // 不再只收叶子节点：X 里有些帖子文字挂在带子节点的容器上，
+            // 只收叶子会把主帖漏掉；全收、按位置排序去重，框内重复的片段
+            // 最多让模型多看一遍，不会把主帖漏成空。
+            if (!node.isPassword) {
                 val bounds = Rect()
                 node.getBoundsInScreen(bounds)
-                if (rect.contains(bounds.centerX(), bounds.centerY())) {
+                // 容错：框和文字框相交就算，不要求中心点一定在框内，
+                // 框稍微画偏一点、没贴到屏幕边也能认到主帖文字。
+                if (Rect.intersects(rect, bounds) || rect.contains(bounds.centerX(), bounds.centerY())) {
                     val t = node.text?.toString()?.trim() ?: ""
                     if (t.length >= 2 && t != "MuseFloatX") out.add(Triple(bounds.top, bounds.left, t))
                     val desc = node.contentDescription?.toString()?.trim() ?: ""

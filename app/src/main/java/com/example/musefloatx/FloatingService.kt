@@ -80,6 +80,7 @@ class FloatingService : Service() {
     private var selectionStart by mutableStateOf(Offset.Zero)
     private var selectionCurrent by mutableStateOf(Offset.Zero)
     private var selecting by mutableStateOf(false)
+    private var selectionBox by mutableStateOf<Rect?>(null)
     private var ballParams: WindowManager.LayoutParams? = null
     private var ballX = 0
     private var ballY = 0
@@ -436,6 +437,7 @@ class FloatingService : Service() {
         selecting = false
         selectionStart = Offset.Zero
         selectionCurrent = Offset.Zero
+        selectionBox = null
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -450,8 +452,10 @@ class FloatingService : Service() {
         val view = ComposeView(this)
         attachOwners(view)
         view.setContent {
-            // 外层 Box 铺满全屏，选框坐标就是屏幕坐标；
-            // 提示条浮在顶部，不占选框区域的布局高度，避免坐标错位。
+            // 框选 v2：松手不再直接结束，框留住，等用户点“确认识别”才认；
+            // 框太小、拖动取消都不直接回面板，留在框选里重框；
+            // 提示条改到底部，顶部不再挡住帖子左上角，框不用贴到屏幕边，
+            // 只要盖住帖子文字就行。
             Box(modifier = Modifier.fillMaxSize()) {
                 Box(
                     modifier = Modifier
@@ -459,6 +463,7 @@ class FloatingService : Service() {
                         .pointerInput(Unit) {
                             detectDragGestures(
                                 onDragStart = { offset ->
+                                    selectionBox = null
                                     selectionStart = offset
                                     selectionCurrent = offset
                                     selecting = true
@@ -470,12 +475,13 @@ class FloatingService : Service() {
                                     val right = maxOf(selectionStart.x, selectionCurrent.x).toInt()
                                     val bottom = maxOf(selectionStart.y, selectionCurrent.y).toInt()
                                     if (right - left < 80 || bottom - top < 80) {
-                                        cancelSelection()
+                                        selectionBox = null
+                                        Toast.makeText(this@FloatingService, "框太小，请重新框选", Toast.LENGTH_SHORT).show()
                                     } else {
-                                        finishSelection(Rect(left, top, right, bottom))
+                                        selectionBox = Rect(left, top, right, bottom)
                                     }
                                 },
-                                onDragCancel = { cancelSelection() },
+                                onDragCancel = { selecting = false },
                                 onDrag = { change, _ ->
                                     change.consume()
                                     selectionCurrent = change.position
@@ -484,15 +490,24 @@ class FloatingService : Service() {
                         }
                 ) {
                     Canvas(modifier = Modifier.fillMaxSize()) {
-                        if (selecting) {
-                            val left = minOf(selectionStart.x, selectionCurrent.x)
-                            val top = minOf(selectionStart.y, selectionCurrent.y)
-                            val width = kotlin.math.abs(selectionCurrent.x - selectionStart.x)
-                            val height = kotlin.math.abs(selectionCurrent.y - selectionStart.y)
+                        val box: Rect? = if (selecting) {
+                            Rect(
+                                minOf(selectionStart.x, selectionCurrent.x).toInt(),
+                                minOf(selectionStart.y, selectionCurrent.y).toInt(),
+                                maxOf(selectionStart.x, selectionCurrent.x).toInt(),
+                                maxOf(selectionStart.y, selectionCurrent.y).toInt()
+                            )
+                        } else selectionBox
+                        if (box != null) {
+                            drawRect(
+                                color = Color(0xFF7C4DFF).copy(alpha = 0.15f),
+                                topLeft = Offset(box.left.toFloat(), box.top.toFloat()),
+                                size = Size((box.right - box.left).toFloat(), (box.bottom - box.top).toFloat())
+                            )
                             drawRect(
                                 color = Color(0xFF7C4DFF),
-                                topLeft = Offset(left, top),
-                                size = Size(width, height),
+                                topLeft = Offset(box.left.toFloat(), box.top.toFloat()),
+                                size = Size((box.right - box.left).toFloat(), (box.bottom - box.top).toFloat()),
                                 style = Stroke(width = 6f)
                             )
                         }
@@ -501,18 +516,30 @@ class FloatingService : Service() {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .align(Alignment.TopCenter)
+                        .align(Alignment.BottomCenter)
                         .background(Color.Black.copy(alpha = 0.7f))
                         .padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        "拖动框选帖子内容，松手后只识别框内文字",
-                        color = Color.White,
-                        fontSize = 14.sp,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Button(onClick = { cancelSelection() }) { Text("取消") }
+                    if (selectionBox == null) {
+                        Text(
+                            "拖动框选帖子文字，松手后框会留住，不用贴到屏幕边",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Button(onClick = { cancelSelection() }) { Text("取消") }
+                    } else {
+                        Button(
+                            onClick = { selectionBox?.let { finishSelection(it) } },
+                            modifier = Modifier.padding(end = 8.dp)
+                        ) { Text("确认识别") }
+                        OutlinedButton(
+                            onClick = { selectionBox = null },
+                            modifier = Modifier.padding(end = 8.dp)
+                        ) { Text("重新框选") }
+                        OutlinedButton(onClick = { cancelSelection() }) { Text("取消") }
+                    }
                 }
             }
         }
@@ -533,8 +560,11 @@ class FloatingService : Service() {
     }
 
     private fun finishSelection(rect: Rect) {
-        removeSelection()
+        // 先认、后撤框选层：框选层是不抢焦点的，认的时候前台窗口还是 X；
+        // 以前是先撤层再认，撤层瞬间前台窗口可能还没切回 X，认出来就是空的，
+        // 这就是框了帖子却认不到的原因之一。
         val text = MuseAccessibilityService.instance?.captureRegion(rect) ?: ""
+        removeSelection()
         if (text.isBlank()) {
             postText = ""
             statusText = "框选区域内没有读到文字，请把框画大一点，框住帖子文字"
@@ -553,6 +583,7 @@ class FloatingService : Service() {
         try { selectionView?.let { wm.removeView(it) } } catch (e: Exception) {}
         selectionView = null
         selecting = false
+        selectionBox = null
     }
 
     private fun removeViews() {
