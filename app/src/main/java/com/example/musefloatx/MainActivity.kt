@@ -64,7 +64,7 @@ class MainActivity : ComponentActivity() {
                         .verticalScroll(rememberScrollState())
                 ) {
                     Text("MuseFloatX", fontSize = 24.sp, fontWeight = FontWeight.Bold)
-                    Text("版本：第 15 版（通用框选版），装好后这里必须显示第 15 版才算新版。", fontSize = 13.sp)
+                    Text("版本：第 16 版（手柄可拖版），装好后这里必须显示第 16 版才算新版。", fontSize = 13.sp)
                     Text("只在 X 里用的悬浮回复助手：点悬浮球识别帖子、生成回复建议，你自己复制粘贴，不自动发送。", fontSize = 14.sp)
                     Spacer(Modifier.height(16.dp))
 

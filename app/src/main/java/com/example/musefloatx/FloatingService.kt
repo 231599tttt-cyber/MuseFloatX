@@ -488,8 +488,8 @@ class FloatingService : Service() {
             // 相当于在冻结的一层上操作；手柄在边缘时自动往里缩一点，
             // 但框的边线仍然可以贴到屏幕最边缘。
             val density = LocalDensity.current.density
-            val handleVisual = 28f * density
-            val handleTouch = 48f * density
+            val handleVisual = 16f * density
+            val handleTouch = 32f * density
             val screenW = cropScreenW
             val screenH = cropScreenH
             val box = cropBox
@@ -514,7 +514,7 @@ class FloatingService : Service() {
                                     cropDragStartBox = startBox
                                     cropDragStartPos = offset
                                     cropDragMode = "NONE"
-                                    if (startBox != null && screenW > 0 && screenH > 0) {
+                                    if (startBox != null && cropScreenW > 0 && cropScreenH > 0) {
                                         val handles = listOf(
                                             "TL" to Offset(startBox.left.toFloat(), startBox.top.toFloat()),
                                             "TR" to Offset(startBox.right.toFloat(), startBox.top.toFloat()),
@@ -528,8 +528,8 @@ class FloatingService : Service() {
                                         var best: String? = null
                                         var bestDist = Float.MAX_VALUE
                                         for ((name, raw) in handles) {
-                                            val vx = raw.x.coerceIn(handleVisual, screenW - handleVisual)
-                                            val vy = raw.y.coerceIn(handleVisual, screenH - handleVisual)
+                                            val vx = raw.x.coerceIn(handleVisual, cropScreenW - handleVisual)
+                                            val vy = raw.y.coerceIn(handleVisual, cropScreenH - handleVisual)
                                             val d = (offset - Offset(vx, vy)).getDistance()
                                             if (d <= handleTouch && d < bestDist) {
                                                 best = name
@@ -563,8 +563,8 @@ class FloatingService : Service() {
                                         "MOVE" -> {
                                             val dx = (currentPos.x - cropDragStartPos.x).toInt()
                                             val dy = (currentPos.y - cropDragStartPos.y).toInt()
-                                            val nl = (startBox.left + dx).coerceIn(0, screenW - bw)
-                                            val nt = (startBox.top + dy).coerceIn(0, screenH - bh)
+                                            val nl = (startBox.left + dx).coerceIn(0, cropScreenW - bw)
+                                            val nt = (startBox.top + dy).coerceIn(0, cropScreenH - bh)
                                             Rect(nl, nt, nl + bw, nt + bh)
                                         }
                                         "TL" -> Rect(
@@ -575,19 +575,19 @@ class FloatingService : Service() {
                                         "TR" -> Rect(
                                             startBox.left,
                                             currentPos.y.toInt().coerceIn(0, startBox.bottom - minSize),
-                                            currentPos.x.toInt().coerceIn(startBox.left + minSize, screenW),
+                                            currentPos.x.toInt().coerceIn(startBox.left + minSize, cropScreenW),
                                             startBox.bottom
                                         )
                                         "BL" -> Rect(
                                             currentPos.x.toInt().coerceIn(0, startBox.right - minSize),
                                             startBox.top,
                                             startBox.right,
-                                            currentPos.y.toInt().coerceIn(startBox.top + minSize, screenH)
+                                            currentPos.y.toInt().coerceIn(startBox.top + minSize, cropScreenH)
                                         )
                                         "BR" -> Rect(
                                             startBox.left, startBox.top,
-                                            currentPos.x.toInt().coerceIn(startBox.left + minSize, screenW),
-                                            currentPos.y.toInt().coerceIn(startBox.top + minSize, screenH)
+                                            currentPos.x.toInt().coerceIn(startBox.left + minSize, cropScreenW),
+                                            currentPos.y.toInt().coerceIn(startBox.top + minSize, cropScreenH)
                                         )
                                         "L" -> Rect(
                                             currentPos.x.toInt().coerceIn(0, startBox.right - minSize),
@@ -595,7 +595,7 @@ class FloatingService : Service() {
                                         )
                                         "R" -> Rect(
                                             startBox.left, startBox.top,
-                                            currentPos.x.toInt().coerceIn(startBox.left + minSize, screenW),
+                                            currentPos.x.toInt().coerceIn(startBox.left + minSize, cropScreenW),
                                             startBox.bottom
                                         )
                                         "T" -> Rect(
@@ -605,7 +605,7 @@ class FloatingService : Service() {
                                         )
                                         "B" -> Rect(
                                             startBox.left, startBox.top, startBox.right,
-                                            currentPos.y.toInt().coerceIn(startBox.top + minSize, screenH)
+                                            currentPos.y.toInt().coerceIn(startBox.top + minSize, cropScreenH)
                                         )
                                         else -> startBox
                                     }
@@ -657,11 +657,11 @@ class FloatingService : Service() {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     OutlinedButton(
-                        onClick = { if (screenW > 0 && screenH > 0) cropBox = Rect(0, 0, screenW, screenH) },
+                        onClick = { if (cropScreenW > 0 && cropScreenH > 0) cropBox = Rect(0, 0, cropScreenW, cropScreenH) },
                         modifier = Modifier.weight(1f).padding(end = 4.dp)
                     ) { Text("全屏") }
                     OutlinedButton(
-                        onClick = { if (screenW > 0 && screenH > 0) cropBox = defaultCropBox(screenW, screenH) },
+                        onClick = { if (cropScreenW > 0 && cropScreenH > 0) cropBox = defaultCropBox(cropScreenW, cropScreenH) },
                         modifier = Modifier.weight(1f).padding(end = 4.dp)
                     ) { Text("重置") }
                     OutlinedButton(
