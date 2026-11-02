@@ -42,6 +42,10 @@ export ANDROID_HOME=$HOME/android-sdk
 
 服务地址换了不用重编 APK：直接在 App 设置里改地址就行。电脑 IP 变了（比如热点重开）也是这样改。
 
+## 详细教程
+
+给别人用的完整一步步教程在 [TUTORIAL.md](TUTORIAL.md)，包括电脑上部署 muse2api、导入账号、查 IP、手机 App 填什么、连不上怎么查。
+
 ## 服务端部署：只用 muse2api，就在自己电脑上
 
 App 本身不带模型，它只调你自己电脑上部署的 OpenAI 兼容服务（`POST {服务地址}/v1/chat/completions`，Bearer 密钥）。
