@@ -8,13 +8,19 @@
 import json
 import os
 import queue
+import sys
 import threading
 import tkinter as tk
 from tkinter import messagebox, scrolledtext
 from urllib import request as urlrequest
 from urllib.error import HTTPError, URLError
 
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
+# 打包成 .exe 后，__file__ 在临时解压目录，每次运行都不一样，
+# 设置必须存在 .exe 所在的文件夹里，否则下次打开又要重填密钥。
+if getattr(sys, "frozen", False):
+    APP_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    APP_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_PATH = os.path.join(APP_DIR, "musefloatx_windows_settings.json")
 DEFAULT_URL = "http://127.0.0.1:18610"
 DEFAULT_MODEL = "muse-spark"
