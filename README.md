@@ -42,23 +42,17 @@ export ANDROID_HOME=$HOME/android-sdk
 
 服务地址换了不用重编 APK：直接在 App 设置里改地址就行。电脑 IP 变了（比如热点重开）也是这样改。
 
-## 服务端部署（二选一）
+## 服务端部署：只用 muse2api，就在自己电脑上
 
-App 本身不带模型，它只调你自己部署的 OpenAI 兼容服务（`POST {服务地址}/v1/chat/completions`，Bearer 密钥）。
+App 本身不带模型，它只调你自己电脑上部署的 OpenAI 兼容服务（`POST {服务地址}/v1/chat/completions`，Bearer 密钥）。
 
-### 方案 A：开源模型（推荐，无账号风险）
+Muse（muse.ai）目前没有公开的官方 API，所以 App 里**没有“Muse 一键登录、装好就能用”**这种做法。做法是：
 
-电脑或 VPS 上装 Ollama，跑同一个 GGUF 模型，手机和电脑都能用：
+1. 在你自己的 Windows 电脑上部署 muse2api，跑起来，默认端口 18610；
+2. 在你自己的电脑 Chrome 里登录 muse.ai，用 muse2api 的 Cookie 导入扩展导入一次账号；
+3. 在 App 里填：服务地址填你电脑的局域网 IP 加 18610，比如 `http://你的电脑IP:18610`，模型填 `muse-spark`，密钥填你自己的 muse2api 密钥，点“测试连接”通过后再用。
 
-- 首选：Qwen2.5-3B-Instruct，Q4_K_M，约 2.1GB
-- 降档：Qwen2.5-1.5B-Instruct，Q4_K_M，约 986MB
-- 上下文只开 512 到 1024 token 就够了，X 回复是单轮，不需要对话记忆
-
-Ollama 默认端口是 11434，App 里服务地址填 `http://你的服务器IP:11434`，模型填你拉下来的模型名。
-
-### 方案 B：muse2api（你自己电脑上已有服务时）
-
-Muse（muse.ai）目前没有公开的官方 API，所以 App 里**没有“Muse 一键登录、装好就能用”**这种做法。如果你自己部署了 muse2api，把它的服务地址（默认端口 18610）和密钥填进来就能调通。
+电脑关了、黑窗口关了，服务就停了，App 也就连不上了；热点重开电脑 IP 变了，直接在 App 设置里改地址就行，不用重编 APK。
 
 App **不做**以下事：不抓取 Muse Cookie、不做导号、不做账号池、不做自动登录、不替你建服务器、不在服务器上托管别人的账号。请不要把 Muse 账号密码、Cookie 或密钥发给任何人，也不要把服务地址公开暴露。
 
