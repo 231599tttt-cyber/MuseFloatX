@@ -12,6 +12,8 @@ package com.example.musefloatx
  * 留空表示没有默认地址，App 里需要手动填服务地址。
  */
 object DefaultEndpoint {
-    const val BASE_URL = "http://10.47.12.157:18610"
+    // 公开版占位符：请改成你自己服务器的地址再编译，或直接在 App 里填。
+    // muse2api 默认端口 18610，Ollama 默认端口 11434，不要填 localhost。
+    const val BASE_URL = "http://YOUR_SERVER_IP:18610"
     const val MODEL = "muse-spark"
 }
